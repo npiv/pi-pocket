@@ -240,7 +240,7 @@ test("mentioned files go along with a message when asked, and show by name", asy
 });
 
 test("skills run as /skill:name with the request, as Pi sends them", async () => {
-    const skill = join(process.env.PI_CODING_AGENT_DIR!, "skills", "deploy");
+    const skill = join(process.env.HOME!, ".agents", "skills", "deploy");
 
     mkdirSync(skill, { recursive: true });
     writeFileSync(

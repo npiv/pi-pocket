@@ -52,6 +52,7 @@ A module split into parts keeps its name for the part others import, with the re
 | `goals.ts`                | "Done when" checks                                                                                                                                                                                                   |
 | `titles.ts`               | A short title for a session with a long first message, from a small model of its provider                                                                                                                            |
 | `prompts.ts`              | Pi's prompt templates and skills (`/skill:name`) as slash commands                                                                                                                                                   |
+| `skills.ts`               | Shared skill discovery from `~/.agents/skills`, project skills, and configured paths, for the system prompt and slash commands                                                                                       |
 | `models.ts`               | The models people can pick, the one a conversation runs with, and finding one by name                                                                                                                                |
 | `running.ts`              | Running now, from Pi Durable's task graph                                                                                                                                                                            |
 

@@ -12,8 +12,9 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { CONFIG_DIR_NAME, loadSkills, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { expandHome } from "./paths.ts";
+import { loadPocketSkills } from "./skills.ts";
 
 export type PromptTemplate = {
     name: string;
@@ -221,19 +222,14 @@ export function expandPromptTemplate(
 /** A skill Pi has in a session's folder, to run as `/skill:name`. */
 export type SkillCommand = { name: string; description: string; path: string; baseDir: string };
 
-/** The skills a session in `cwd` has, as Pi loads them. `paths` are Pi's configured extra ones. */
+/** The skills in ~/.agents/skills, the session's .pi/skills, and Pi's configured extra paths. */
 export function loadSkillCommands(
     cwd: string,
     agentDir: string,
     paths: readonly string[],
 ): SkillCommand[] {
     try {
-        const { skills } = loadSkills({
-            cwd,
-            agentDir,
-            skillPaths: [...paths],
-            includeDefaults: true,
-        });
+        const { skills } = loadPocketSkills(cwd, agentDir, paths);
 
         return skills.map((skill) => ({
             name: skill.name,

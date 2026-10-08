@@ -1,6 +1,6 @@
 # Changing how Pi works, without code
 
-Most changes people ask for ("always use pnpm", "review the way we do it here", "never touch the migrations") need no code. Pi Pocket reads the same files Pi does, so what is written for Pi works here too, and the other way round. Pi's own documentation covers each in full; its path is in the system prompt.
+Most changes people ask for ("always use pnpm", "review the way we do it here", "never touch the migrations") need no code. Pi Pocket loads shared user instructions and skills from `~/.agents/`. It also reads Pi's project files, prompt templates, and configuration. Pi's own documentation covers each in full. The system prompt gives its path.
 
 ## Instructions for one session
 
@@ -10,8 +10,9 @@ Use them for rules that belong to one piece of work. You cannot set them with a 
 
 ## AGENTS.md: rules for a project, or for everything
 
-Pi loads context files the way Pi does:
+Pi Pocket loads these context files in order:
 
+- `~/.agents/AGENTS.md`: shared user instructions for every session.
 - `~/.pi/agent/AGENTS.md`: for every session, whatever its folder.
 - `AGENTS.md` (or `CLAUDE.md`) in the session's folder and each folder above it.
 
@@ -23,7 +24,7 @@ Keep them short and true: they go with every request, and a rule Pi cannot follo
 
 A skill is a folder with a `SKILL.md`: a name and a description at the top, the steps below. Its name and description go into the system prompt; Pi reads the rest when a task matches it, or when someone sends `/skill:name what to do`.
 
-Put one in `~/.pi/agent/skills/<name>/` (for every session), or in `.pi/skills/` or `.agents/skills/` in a project (for sessions in it). Pi's settings can add more folders. See Pi's `skills.md`. Like `AGENTS.md`, skills are read again within 30 seconds.
+Put one in `~/.agents/skills/<name>/` for every session, or in `.pi/skills/` in a project for sessions in it. Pi's configuration can add more folders, including `~/.pi/agent/skills/` or a project's `.agents/skills/`. Pi Pocket uses `~/.agents/skills/` as its user default. See Pi's `skills.md`. Like `AGENTS.md`, skills are read again within 30 seconds.
 
 ## Prompt templates: saved messages with blanks
 

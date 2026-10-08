@@ -1,22 +1,24 @@
 /**
- * The system prompt: who the agent is, how to behave on a phone-sized screen, where Pi Pocket's documentation is, the
- * project's AGENTS.md files, Pi's skills, and the working directory. Sections render before every request; only
- * changed sections are sent again, so everything here is stable between requests unless a file on disk changed.
+ * The system prompt: who the agent is, how to behave on a phone-sized screen, where Pi Pocket's documentation is,
+ * the user's and project's AGENTS.md files, skills, and the working directory. Sections render before every request;
+ * only changed sections are sent again, so everything here is stable between requests unless a file on disk changed.
  *
  * Edit freely: saving this file reloads it into the running server.
  */
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
     formatSkillsForPrompt,
     getDocsPath,
     loadProjectContextFiles,
-    loadSkills,
 } from "@earendil-works/pi-coding-agent";
 import { defineExtension, type PromptInput, section } from "@earendil-works/pi-durable";
 import { APP_ROOT } from "../config.ts";
 import type { PocketHost } from "../host.ts";
+import { loadPocketSkills } from "../skills.ts";
 
-const PREAMBLE = `You are Pi, a coding agent running inside Pi Pocket: a durable, multiplayer web app built on Pi Durable. People talk to you from a browser, often a phone, and several people can share one conversation. When more than one person uses this server, each message starts with [from: Name].
+const PREAMBLE = `You are a coding agent running inside Pi Pocket: a durable, multiplayer web app built on Pi Durable. People talk to you from a browser, often a phone, and several people can share one conversation. When more than one person uses this server, each message starts with [from: Name].
 
 You work in the conversation's working directory with the tools you are given. Your work is durable: if the server restarts, you continue where you left off. A tool call cut off by a restart comes back as an "interrupted" error when it was not safe to repeat; check what actually happened before you retry it.`;
 
@@ -45,7 +47,41 @@ function docs(dataDir: string): string {
 
 const STALE_MS = 30_000;
 
+type ContextFile = { path: string; content: string };
 type Resources = { at: number; context: string | undefined; skills: string | undefined };
+
+/** Load the user's ~/.agents/AGENTS.md before Pi's own and project-scoped context files. */
+export function loadContextFiles(
+    cwd: string,
+    agentDir: string,
+    userAgentsFile = join(homedir(), ".agents", "AGENTS.md"),
+    warn: (message: string) => void = () => {},
+): ContextFile[] {
+    const files: ContextFile[] = [];
+
+    try {
+        files.push({ path: userAgentsFile, content: readFileSync(userAgentsFile, "utf8") });
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            warn(`Could not load ${userAgentsFile}: ${String(error)}`);
+        }
+    }
+
+    try {
+        const seen = new Set(files.map((file) => resolve(file.path)));
+
+        for (const file of loadProjectContextFiles({ cwd, agentDir })) {
+            if (!seen.has(resolve(file.path))) {
+                files.push(file);
+                seen.add(resolve(file.path));
+            }
+        }
+    } catch (error) {
+        warn(`Could not load AGENTS.md files for ${cwd}: ${String(error)}`);
+    }
+
+    return files;
+}
 
 export default function createPrompt(host: PocketHost) {
     // Context files and skills load once per directory, and again when the copy is older than STALE_MS.
@@ -61,25 +97,18 @@ export default function createPrompt(host: PocketHost) {
         let context: string | undefined;
         let skills: string | undefined;
 
-        try {
-            const files = loadProjectContextFiles({ cwd, agentDir: host.agentDir });
+        const files = loadContextFiles(cwd, host.agentDir, undefined, (message) =>
+            host.notice("warning", message),
+        );
 
-            if (files.length > 0) {
-                context = files
-                    .map((file) => `<file path="${file.path}">\n${file.content.trim()}\n</file>`)
-                    .join("\n\n");
-            }
-        } catch (error) {
-            host.notice("warning", `Could not load AGENTS.md files for ${cwd}: ${String(error)}`);
+        if (files.length > 0) {
+            context = files
+                .map((file) => `<file path="${file.path}">\n${file.content.trim()}\n</file>`)
+                .join("\n\n");
         }
 
         try {
-            const loaded = loadSkills({
-                cwd,
-                agentDir: host.agentDir,
-                skillPaths: host.skillPaths(),
-                includeDefaults: true,
-            });
+            const loaded = loadPocketSkills(cwd, host.agentDir, host.skillPaths());
             const text = formatSkillsForPrompt(loaded.skills, "read").trim();
 
             skills = text === "" ? undefined : text;

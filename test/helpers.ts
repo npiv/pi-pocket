@@ -14,7 +14,9 @@ import type { Client } from "../src/server/room.ts";
 export const context = BACKGROUND_CONTEXT;
 
 export const root = mkdtempSync(join(tmpdir(), "pi-pocket-test-"));
-// Isolate from the real Pi install: its auth, settings, skills, and Lancet Guard.
+// Isolate from the real home and Pi install: context, skills, auth, settings, and Lancet Guard.
+process.env.HOME = join(root, "home");
+mkdirSync(process.env.HOME, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
 process.env.PI_POCKET_GUARD = "off";
 mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });

@@ -6,7 +6,7 @@ For agents (and people) who change how Pi works in Pi Pocket, extend Pi Pocket, 
 
 - **The code:** the folder above this one (`web/`, `src/`, `docs/`, `test/`). It runs straight from these files: there is no build.
 - **The data:** `~/.pi-pocket/`, or `PI_POCKET_DIR` (the launcher shows it as **Data**). `config.json` holds people, roles, tokens, invites, and settings; `pocket.sqlite` holds every session; `extensions/` holds the owner's drop-in extensions. Change data through the app, never by editing these files: the server keeps them in memory and writes over them. The one exception is `extensions/`, where drop-ins go ([extensions.md](extensions.md)).
-- **Pi's own files:** `~/.pi/agent/` (sign-ins, models, settings, `AGENTS.md`, skills, prompt templates). Pi Pocket uses them as Pi does.
+- **Shared user files:** `~/.agents/AGENTS.md` for instructions and `~/.agents/skills/` for skills. Pi Pocket also reads `~/.pi/agent/` for sign-ins, models, configuration, `AGENTS.md`, and prompt templates.
 
 ## Pick the lightest change
 
@@ -15,7 +15,7 @@ Each step reaches further than the one before it, and asks more care. Use the fi
 | To change                                                          | Use                                                                         | Read                               |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------- |
 | How Pi works in one session                                        | The session's instructions (Menu → Instructions for Pi)                     | [customizing.md](customizing.md)   |
-| How Pi works in a project, or everywhere                           | An `AGENTS.md` in the project, or Pi's own in `~/.pi/agent/`                | [customizing.md](customizing.md)   |
+| How Pi works in a project, or everywhere                           | An `AGENTS.md` in the project, or `~/.agents/AGENTS.md`                     | [customizing.md](customizing.md)   |
 | A procedure Pi should follow on request                            | A skill, or a prompt template: both become slash commands                   | [customizing.md](customizing.md)   |
 | What Pi can do: a new tool, a rule in its prompt, a check on calls | A drop-in extension in `~/.pi-pocket/extensions/`, which the owner turns on | [extensions.md](extensions.md)     |
 | Pi Pocket itself: its screens, its server, a built-in extension    | Its code, while it runs                                                     | [self-editing.md](self-editing.md) |
