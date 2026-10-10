@@ -1,6 +1,6 @@
 # Changing how Pi works, without code
 
-Most changes people ask for ("always use pnpm", "review the way we do it here", "never touch the migrations") need no code. Pi Pocket loads shared user instructions and skills from `~/.agents/`. It also reads Pi's project files, prompt templates, and configuration. Pi's own documentation covers each in full. The system prompt gives its path.
+Most changes people ask for ("always use pnpm", "review the way we do it here", "never touch the migrations") need no code. Pi Pocket loads shared user instructions from `~/.agents/AGENTS.md`, then reads Pi's own context files, skills, prompt templates, and configuration. Pi's own documentation covers each in full; its path is in the system prompt.
 
 ## Instructions for one session
 
@@ -24,11 +24,13 @@ Keep them short and true: they go with every request, and a rule Pi cannot follo
 
 A skill is a folder with a `SKILL.md`: a name and a description at the top, the steps below. Its name and description go into the system prompt; Pi reads the rest when a task matches it, or when someone sends `/skill:name what to do`.
 
-Put one in `~/.agents/skills/<name>/` for every session, or in `.pi/skills/` in a project for sessions in it. Pi's configuration can add more folders, including `~/.pi/agent/skills/` or a project's `.agents/skills/`. Pi Pocket uses `~/.agents/skills/` as its user default. See Pi's `skills.md`. Like `AGENTS.md`, skills are read again within 30 seconds.
+Put one in `~/.pi/agent/skills/<name>/` or `~/.agents/skills/<name>/` (for every session), or in a project's `.pi/skills/` or `.agents/skills/` (for sessions in it). A project's `.agents/skills/` counts in the session's folder and each folder above it, up to the repository's root. Pi's settings can add more folders. Where two skills share a name, the project's wins. See Pi's `skills.md`. Like `AGENTS.md`, skills are read again within 30 seconds.
+
+A project's `.agents/skills/` load only in a project Pi trusts. When a session's project has some and nobody has decided, Pi Pocket asks its owner above the message box; `/trust` (or Menu → **Project trust**) shows the answer and changes it. The answer goes where Pi's CLI keeps its own (`~/.pi/agent/trust.json`), so each goes by what was decided in the other; in the CLI, trust also loads the project's `.pi` settings, extensions, and packages. `"defaultProjectTrust": "always"` (or `"never"`) in `~/.pi/agent/settings.json` answers for every project nobody decided about. The CLI asks before a project's `.pi/skills/` too; Pi Pocket loads those until you answer "Don't trust" (or `defaultProjectTrust` is `"never"`), and then leaves them out too. **Not now** (×) puts the question off in that tab.
 
 ## Prompt templates: saved messages with blanks
 
-A Markdown file in `~/.pi/agent/prompts/` (or a project's `.pi/prompts/`) becomes a slash command named after it: `review.md` is `/review`. `$1`, `$2`, … take the words after the command, `$@` all of them. See Pi's `prompt-templates.md`.
+A Markdown file in `~/.pi/agent/prompts/` (or a project's `.pi/prompts/`, unless Pi was told not to trust the project) becomes a slash command named after it: `review.md` is `/review`. `$1`, `$2`, … take the words after the command, `$@` all of them. See Pi's `prompt-templates.md`.
 
 Use a template for a message people send often; use a skill for steps Pi should know how to take.
 

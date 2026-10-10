@@ -14,16 +14,17 @@ import type { Client } from "../src/server/room.ts";
 export const context = BACKGROUND_CONTEXT;
 
 export const root = mkdtempSync(join(tmpdir(), "pi-pocket-test-"));
-// Isolate from the real home and Pi install: context, skills, auth, settings, and Lancet Guard.
-process.env.HOME = join(root, "home");
-mkdirSync(process.env.HOME, { recursive: true });
+/** The home folder the app finds `~/.agents/skills` in, isolated from the real home. */
+export const home = join(root, "home");
+
+process.env.HOME = home;
+mkdirSync(home, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
 process.env.PI_POCKET_GUARD = "off";
 mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 /** The folder test sessions work in. */
 export const work = join(root, "work");
 mkdirSync(work);
-
 const { PocketApp } = await import("../src/server/app.ts");
 
 export type App = Awaited<ReturnType<typeof PocketApp.open>>;
@@ -60,7 +61,8 @@ export function scriptedModel(route: FauxResponseStep = echo) {
         ],
     });
 
-    faux.setResponses(Array.from({ length: 200 }, () => route));
+    // Plenty: a test file of many subagents (each of whose turns takes one) used 200 up.
+    faux.setResponses(Array.from({ length: 1000 }, () => route));
 
     return faux;
 }
@@ -77,6 +79,7 @@ export function openApp(
         supervised: false,
         log: () => {},
         configureModels: (models) => models.registerNativeProvider(model.provider),
+        home,
         ...(now === undefined ? {} : { now }),
     });
 }

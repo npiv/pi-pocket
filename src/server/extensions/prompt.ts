@@ -5,7 +5,7 @@
  *
  * Edit freely: saving this file reloads it into the running server.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -16,7 +16,6 @@ import {
 import { defineExtension, type PromptInput, section } from "@earendil-works/pi-durable";
 import { APP_ROOT } from "../config.ts";
 import type { PocketHost } from "../host.ts";
-import { loadPocketSkills } from "../skills.ts";
 
 const PREAMBLE = `You are a coding agent running inside Pi Pocket: a durable, multiplayer web app built on Pi Durable. People talk to you from a browser, often a phone, and several people can share one conversation. When more than one person uses this server, each message starts with [from: Name].
 
@@ -48,7 +47,12 @@ function docs(dataDir: string): string {
 const STALE_MS = 30_000;
 
 type ContextFile = { path: string; content: string };
-type Resources = { at: number; context: string | undefined; skills: string | undefined };
+type Resources = {
+    at: number;
+    trust: number;
+    context: string | undefined;
+    skills: string | undefined;
+};
 
 /** Load the user's ~/.agents/AGENTS.md before Pi's own and project-scoped context files. */
 export function loadContextFiles(
@@ -84,13 +88,25 @@ export function loadContextFiles(
 }
 
 export default function createPrompt(host: PocketHost) {
-    // Context files and skills load once per directory, and again when the copy is older than STALE_MS.
+    // Context files and skills load once per directory, and again when the copy is older than STALE_MS, or Pi's trust
+    // store changed since: a project trusted now has skills it did not have, from the next request on. Only answers to
+    // "trust this project?" show at once; other changes (a new skill, Pi's defaultProjectTrust) wait for STALE_MS, or
+    // a request more (the app reads Pi's settings again in the background as often).
     const resources = new Map<string, Resources>();
+
+    const trustChanged = () => {
+        try {
+            return statSync(join(host.agentDir, "trust.json")).mtimeMs;
+        } catch {
+            return 0;
+        }
+    };
 
     const load = (cwd: string): Resources => {
         const cached = resources.get(cwd);
+        const trust = trustChanged();
 
-        if (cached !== undefined && Date.now() - cached.at < STALE_MS) {
+        if (cached !== undefined && Date.now() - cached.at < STALE_MS && cached.trust === trust) {
             return cached;
         }
 
@@ -108,15 +124,14 @@ export default function createPrompt(host: PocketHost) {
         }
 
         try {
-            const loaded = loadPocketSkills(cwd, host.agentDir, host.skillPaths());
-            const text = formatSkillsForPrompt(loaded.skills, "read").trim();
+            const text = formatSkillsForPrompt(host.skills(cwd), "read").trim();
 
             skills = text === "" ? undefined : text;
         } catch (error) {
             host.notice("warning", `Could not load skills for ${cwd}: ${String(error)}`);
         }
 
-        const fresh = { at: Date.now(), context, skills };
+        const fresh = { at: Date.now(), trust, context, skills };
 
         resources.set(cwd, fresh);
 
