@@ -1,7 +1,7 @@
 // The model picker: a menu over the model chip, searchable once there are many models; and the same menu for the model
 // and thinking level new sessions start with.
 import { useEffect, useRef, useState } from "preact/hooks";
-import { actions, attempt, closeSheet, openSheet, store } from "../store.js";
+import { actions, attempt, canSteer, closeSheet, openSheet, store } from "../store.js";
 import { anchorStyle, formatTokens, html, Icon, popAnchor } from "../ui.js";
 
 /** Models past this many get a search box in the picker. */
@@ -47,6 +47,7 @@ export function ModelPicker() {
     // Decided once: a search box that went away when emptied would take the caret with it.
     const [searchable] = useState(() => models.length > MODEL_SEARCH_AT || query !== "");
     const [picked, setPicked] = useState(0);
+    const [savingFastMode, setSavingFastMode] = useState(false);
     const [anchor, setAnchor] = useState(() => (forDefault ? null : modelAnchor()));
     const box = useRef(null);
     const search = useRef(null);
@@ -92,6 +93,20 @@ export function ModelPicker() {
                 thinkingLevel,
             }),
         );
+    const fastMode = agent?.fastMode === true;
+    const canConfigure =
+        canSteer() && (!view.turns?.on || view.turns.driver === store.state.me?.id);
+
+    const changeFastMode = (enabled) => {
+        if (!canConfigure || savingFastMode || enabled === fastMode) {
+            return;
+        }
+
+        setSavingFastMode(true);
+        attempt(() => actions.configure({ fastMode: enabled })).finally(() =>
+            setSavingFastMode(false),
+        );
+    };
 
     useEffect(() => {
         // The default's picker has no chip to open from: it stays in the middle.
@@ -249,6 +264,35 @@ export function ModelPicker() {
                                 </button>`,
                         )}
                     </div>
+                </div>`
+            }
+            ${
+                !forDefault &&
+                agent?.supportsFastMode &&
+                html`<div class="pop-menu-foot">
+                    <div class="label">Fast mode</div>
+                    <div
+                        class="segmented model-levels"
+                        role="radiogroup"
+                        aria-label="Fast mode"
+                        aria-describedby="fast-mode-warning"
+                    >
+                        ${[false, true].map(
+                            (enabled) => html`<button
+                                type="button"
+                                role="radio"
+                                aria-checked=${fastMode === enabled}
+                                class=${fastMode === enabled ? "on" : ""}
+                                disabled=${!canConfigure || savingFastMode}
+                                onClick=${() => changeFastMode(enabled)}
+                            >
+                                ${enabled ? "On" : "Off"}
+                            </button>`,
+                        )}
+                    </div>
+                    <p id="fast-mode-warning" class="muted small">
+                        Priority processing uses more of your usage limit or costs more.
+                    </p>
                 </div>`
             }
             ${

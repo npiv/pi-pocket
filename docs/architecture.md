@@ -86,6 +86,14 @@ A message to Pi names its person in its request id (`requests.ts`):
 
 `attribution.ts` notes each one in the conversation's authors document. Pi works for whoever wrote the newest message (`requesterOf`). A subagent works for whoever its parent worked for when it sent the subagent its last message. Spend, approvals (the "someone else must allow" rule), schedules, and subagents all ask `requesterOf`. A message sent for someone must carry that person in its request id. One that names nobody does not change whom Pi works for: Pi goes on working for whoever it worked for before. Spend, when nobody is known, falls back to whoever started the session, then the owner.
 
+## OpenAI request tiers
+
+A conversation stores its optional `serviceTier` in Pi Durable's existing `pi.agent` document. The model picker reads it through `models.ts`. `commands.configure` validates the Fast mode choice, applies the normal driving permissions, and clears it when switching to an unsupported provider. It serializes configuration requests per conversation, so a simultaneous model or thinking change cannot restore an older tier.
+
+The version-pinned patches in `patches/` extend Pi Durable and Pi AI until their normal request options support this path. `npm install` and `npm ci` apply them through `patch-package`. Generation and compaction save the tier with their request options before calling the model. Recovery uses those saved options, not the conversation's newer choice. Only OpenAI's Responses and Codex adapters receive the tier. Their existing pricing logic still counts priority usage. No global request state or payload interception is used.
+
+Agent inheritance also carries the tier: forks use the value at their fork point, and new subagents copy their parent's value. The request path ignores inherited tiers on other providers. New independent sessions do not inherit the last session's tier. Title generation remains outside this policy.
+
 ## A request
 
 `http.ts` routes by the first path segment, and turns whatever a route throws into an answer: an `HttpError`'s status and message, or a logged 500.

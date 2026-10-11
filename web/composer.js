@@ -1148,12 +1148,17 @@ export function Composer() {
                         />
                         <button
                             class=${`model-chip ${agent?.available === false ? "warn" : ""}`}
-                            aria-label=${`Model: ${modelLabel(agent)}${level ? `, thinking ${level}` : ""}`}
-                            title=${`Model and thinking: ${modelLabel(agent)}${level ? `, ${level}` : ""}`}
+                            aria-label=${`Model: ${modelLabel(agent)}${level ? `, thinking ${level}` : ""}${agent?.fastMode ? ", fast mode on" : ""}`}
+                            title=${`Model and thinking: ${modelLabel(agent)}${level ? `, ${level}` : ""}${agent?.fastMode ? ", fast mode on" : ""}`}
                             onClick=${() => openSheet({ type: "model" })}
                         >
                             <${Icon} name="sparkle" size=${12} class="model-spark" />
                             <span class="model-name">${shortModel(agent)}</span>
+                            ${
+                                agent?.supportsFastMode &&
+                                agent.fastMode &&
+                                html`<span class="small model-fast" title="Fast mode on">fast</span>`
+                            }
                             ${level && html`<span class="model-level">${level}</span>`}
                         </button>
                         ${

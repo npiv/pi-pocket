@@ -42,6 +42,15 @@ type ModelSummary = {
     levels: string[];
 };
 
+/** Only OpenAI's own Responses endpoints accept this app's priority-processing setting. */
+export function supportsFastMode(model: Model<Api> | undefined): boolean {
+    return (
+        model !== undefined &&
+        ((model.provider === "openai" && model.api === "openai-responses") ||
+            (model.provider === "openai-codex" && model.api === "openai-codex-responses"))
+    );
+}
+
 /** Whether a model thinks, and at which levels, and whether it takes images. */
 function capabilities(model: Model<Api>) {
     return {
@@ -98,6 +107,8 @@ export function agentInfo(models: ModelRuntime, agent: AgentState, defaultCwd: s
         cwd: agent.cwd ?? defaultCwd,
         ...(agent.instructions === undefined ? {} : { instructions: agent.instructions }),
         available: model !== undefined && models.hasConfiguredAuth(model.provider),
+        supportsFastMode: supportsFastMode(model),
+        fastMode: supportsFastMode(model) && agent.serviceTier === "priority",
         ...(model === undefined
             ? {}
             : {

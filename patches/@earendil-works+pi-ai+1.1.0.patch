@@ -1,0 +1,37 @@
+diff --git a/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js b/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
+index 6ee63ec..88d043f 100644
+--- a/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
++++ b/node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js
+@@ -359,6 +359,7 @@ export const streamSimple = (model, context, options) => {
+     const base = {
+         ...buildBaseOptions(model, context, options, apiKey),
+         toolChoice: options?.toolChoice,
++        serviceTier: options?.serviceTier,
+     };
+     const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
+     const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+diff --git a/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js b/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js
+index 2a6b4e4..29eb2eb 100644
+--- a/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js
++++ b/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js
+@@ -179,6 +179,7 @@ export const streamSimple = (model, context, options) => {
+     const base = {
+         ...buildBaseOptions(model, context, options, options?.apiKey),
+         toolChoice: options?.toolChoice,
++        serviceTier: options?.serviceTier,
+     };
+     const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
+     const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+diff --git a/node_modules/@earendil-works/pi-ai/dist/types.d.ts b/node_modules/@earendil-works/pi-ai/dist/types.d.ts
+index b01603b..a304f4c 100644
+--- a/node_modules/@earendil-works/pi-ai/dist/types.d.ts
++++ b/node_modules/@earendil-works/pi-ai/dist/types.d.ts
+@@ -242,6 +242,8 @@ export interface AnthropicAllowedFallbackModel {
+     cost: ModelCost;
+ }
+ export interface SimpleStreamOptions extends StreamOptions {
++    /** OpenAI Responses service tier; other adapters ignore this option. */
++    serviceTier?: "default" | "priority";
+     /** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
+     toolChoice?: ToolChoice;
+     reasoning?: ThinkingLevel;

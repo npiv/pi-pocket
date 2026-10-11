@@ -658,6 +658,8 @@ export class PocketApp {
                 const idle = safe(() => settings.getHttpIdleTimeoutMs()) ?? 300_000;
 
                 return {
+                    // Fast mode is opt-in, even if an OpenAI project's default tier is priority.
+                    serviceTier: "default",
                     timeoutMs: provider?.timeoutMs ?? (idle === 0 ? 2_147_483_647 : idle),
                     ...(provider?.maxRetryDelayMs === undefined
                         ? {}

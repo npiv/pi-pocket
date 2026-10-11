@@ -1,0 +1,142 @@
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/agent.js b/node_modules/@earendil-works/pi-durable/dist/harness/agent.js
+index 2d09ba1..cb7eb87 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/agent.js
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/agent.js
+@@ -86,6 +86,7 @@ function applyChange(state, change) {
+     };
+     set("model", change.model === undefined || change.model === null ? change.model : { ...change.model });
+     set("thinkingLevel", change.thinkingLevel);
++    set("serviceTier", change.serviceTier);
+     const extensions = change.extensions;
+     set("extensions", extensions === undefined || extensions === null
+         ? extensions
+@@ -176,6 +177,7 @@ export function resolveAgent(state, snapshot, settings, report) {
+     const agent = {
+         ...(state?.model === undefined ? {} : { model: state.model }),
+         thinkingLevel: state?.thinkingLevel ?? "off",
++        ...(state?.serviceTier === undefined ? {} : { serviceTier: state.serviceTier }),
+         extensions,
+         tools,
+         sections: agentSections,
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/compaction.js b/node_modules/@earendil-works/pi-durable/dist/harness/compaction.js
+index d4c180b..6a360e3 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/compaction.js
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/compaction.js
+@@ -4,7 +4,7 @@ import { CompactionEntry } from "../entries.js";
+ import { defineTask } from "../tasks.js";
+ import { orderToolResults } from "./context.js";
+ import { addCompactionStatus, compactionStatus, LiveDoc, removeCompactionStatus } from "./live.js";
+-import { ensureProviderSessionId } from "./provider.js";
++import { ensureProviderSessionId, resolveStreamOptions } from "./provider.js";
+ import { admitSubmission } from "./submissions.js";
+ import { recordUsage } from "./usage.js";
+ /** Longest tool result text a serialized summary source keeps. */
+@@ -91,7 +91,7 @@ export const CompactionTask = defineTask({
+                 attempt: 1,
+                 model: ref,
+                 thinkingLevel: agent.thinkingLevel,
+-                streamOptions: settings.stream,
++                streamOptions: resolveStreamOptions(settings.stream, agent, model),
+                 maxTokens: Math.min(Math.floor(0.8 * policy.reserveTokens), model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY),
+                 tail: view.entries.reduce((tail, entry) => (entry.id > tail ? entry.id : tail), firstKept),
+                 firstKept,
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/generation.js b/node_modules/@earendil-works/pi-durable/dist/harness/generation.js
+index abb121b..cbdef29 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/generation.js
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/generation.js
+@@ -10,7 +10,7 @@ import { applyBoundary, prepareBoundary } from "./inbox.js";
+ import { assignJson } from "./json.js";
+ import { endRun, LiveDoc } from "./live.js";
+ import { planSystemEntries, renderSections, replaySections } from "./prompt.js";
+-import { ensureProviderSessionId } from "./provider.js";
++import { ensureProviderSessionId, resolveStreamOptions } from "./provider.js";
+ import { appendToolResult, harnessError, ToolTask } from "./tool.js";
+ import { recordUsage } from "./usage.js";
+ const DEFAULT_POLL_AFTER_MS = 5000;
+@@ -85,7 +85,7 @@ export const GenerationTask = defineTask({
+                     ...(compacted === undefined ? {} : { compacted }),
+                     model,
+                     thinkingLevel,
+-                    streamOptions: settings.stream,
++                    streamOptions: resolveStreamOptions(settings.stream, agent, resolved),
+                     cutoff,
+                 };
+                 return { status: "running", checkpoint: { phase: "request", ...request } };
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/provider.d.ts b/node_modules/@earendil-works/pi-durable/dist/harness/provider.d.ts
+index 777dd25..0019594 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/provider.d.ts
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/provider.d.ts
+@@ -1,4 +1,6 @@
+ import type { Context } from "@earendil-works/chord";
++import type { Api, Model } from "@earendil-works/pi-ai";
++import type { Agent, ConversationStreamOptions } from "./types.ts";
+ import type { TaskRuntime } from "../types.ts";
+ /** Stable provider-facing identity of one conversation. */
+ export type ProviderState = {
+@@ -11,4 +13,6 @@ export declare const ProviderDoc: import("../types.ts").ConversationDocToken<Pro
+  * one migration commit whose `tx.doc()` runs `initial()` before the provider request starts.
+  */
+ export declare function ensureProviderSessionId<I, S, R, H extends object>(runtime: TaskRuntime<I, S, R, H>, context: Context): Promise<string>;
++/** Snapshot request options, applying service tiers only to the native OpenAI Responses providers. */
++export declare function resolveStreamOptions(stream: ConversationStreamOptions, agent: Agent, model: Model<Api>): ConversationStreamOptions;
+ //# sourceMappingURL=provider.d.ts.map
+\ No newline at end of file
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/provider.js b/node_modules/@earendil-works/pi-durable/dist/harness/provider.js
+index 0313dc4..30a75da 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/provider.js
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/provider.js
+@@ -27,4 +27,16 @@ export async function ensureProviderSessionId(runtime, context) {
+         throw new Error(`Conversation ${runtime.conversationId} has no provider session ID`);
+     return created;
+ }
++/** Snapshot request options, applying service tiers only to the native OpenAI Responses providers. */
++export function resolveStreamOptions(stream, agent, model) {
++    const { serviceTier: defaultTier, ...options } = stream;
++    const serviceTier = agent.serviceTier ?? defaultTier;
++    const supportsServiceTier =
++        (model.provider === "openai" && model.api === "openai-responses") ||
++        (model.provider === "openai-codex" && model.api === "openai-codex-responses");
++    return {
++        ...options,
++        ...(supportsServiceTier && serviceTier !== undefined ? { serviceTier } : {}),
++    };
++}
+ //# sourceMappingURL=provider.js.map
+\ No newline at end of file
+diff --git a/node_modules/@earendil-works/pi-durable/dist/harness/types.d.ts b/node_modules/@earendil-works/pi-durable/dist/harness/types.d.ts
+index b8c1e37..abef770 100644
+--- a/node_modules/@earendil-works/pi-durable/dist/harness/types.d.ts
++++ b/node_modules/@earendil-works/pi-durable/dist/harness/types.d.ts
+@@ -248,6 +248,8 @@ export interface Registry<Tool extends ToolRegistration = ToolRegistration> exte
+ export type AgentState = {
+     model?: ModelRef;
+     thinkingLevel?: ModelThinkingLevel;
++    /** OpenAI Responses service tier; absent follows the harness stream default. */
++    serviceTier?: "default" | "priority";
+     /** An array selects exactly these extensions, in order. An object edits the host default selection. */
+     extensions?: string[] | {
+         add?: string[];
+@@ -266,6 +268,7 @@ export type AgentState = {
+ export type AgentChange = {
+     readonly model?: ModelRef | null;
+     readonly thinkingLevel?: ModelThinkingLevel | null;
++    readonly serviceTier?: "default" | "priority" | null;
+     readonly extensions?: readonly Extension[] | {
+         readonly add?: readonly Extension[];
+         readonly remove?: readonly Extension[];
+@@ -280,6 +283,7 @@ export type AgentChange = {
+ export type Agent<Tool extends ToolRegistration = ToolRegistration> = {
+     readonly model?: ModelRef;
+     readonly thinkingLevel: ModelThinkingLevel;
++    readonly serviceTier?: "default" | "priority";
+     readonly extensions: readonly Extension<Tool>[];
+     /** The tools a request offers, in order. */
+     readonly tools: readonly Tool[];
+@@ -301,6 +305,7 @@ export type ConversationCreateOptions = {
+ };
+ /** Curated pi-ai request options; absent fields use pi-ai defaults. */
+ export type ConversationStreamOptions = {
++    serviceTier?: "default" | "priority";
+     transport?: Transport;
+     timeoutMs?: number;
+     /** Provider/SDK retries inside one request attempt. */

@@ -177,6 +177,10 @@ Plain ES modules, loaded as they are. `store.js` holds the shared state, and not
 - Extensions reach the app only through `PocketHost`.
 - Server code is erasable TypeScript with `.ts` imports. Comments are plain sentences.
 
+## Dependency patches: `patches/`
+
+`patch-package` applies the version-pinned Pi AI and Pi Durable patches after installation. They carry OpenAI's service tier from the conversation's agent through saved generation and compaction requests to the provider adapters. See [architecture.md](architecture.md#openai-request-tiers). When upgrading either dependency, review these patches and run `test/fast-mode.test.ts` before removing or replacing them.
+
 ## Tests: `test/`
 
 `npm test` runs every `*.test.ts` with Node's test runner. `helpers.ts` provides a scripted model (`scriptedModel(route)`: `faux-1`, `faux-2`, `faux-vision`), `openApp` (the same data folder again is a restart; `now` moves the clock), `newSession`, `say`, `until`, and `fakeTab`. The scripted model costs nothing: spend tests write `pi.usage` themselves. `browser.test.ts` drives a real Chromium, where one is installed, for the built-in browser, and `peeks-ui.test.ts`, `mobile-ui.test.ts`, `subagents-ui.test.ts`, `trust-ui.test.ts`, and `pi-sessions-ui.test.ts` load the whole web app in it and test peek tiles, the app at phone size, the subagents bar, dock, and board, project trust, and continuing Pi's sessions there. `docs-examples.test.ts` loads the example extensions in `docs/examples/` as drop-ins, and checks the docs' links and the prompt's paths to them. `turns.test.ts` runs `web/turns.js` in Node: how the transcript groups Pi's answers and names them, and what a call came to. The rest of the web app has no tests: check a change to it in a browser, on a copy (`node test/serve.ts`: this folder's code, its own temporary data, a scripted model).

@@ -2289,6 +2289,11 @@ pre.diff .del {
     color: var(--muted);
 }
 
+.model-chip .model-fast {
+    flex-shrink: 0;
+    color: var(--accent);
+}
+
 .model-chip.warn {
     color: var(--warn);
 }

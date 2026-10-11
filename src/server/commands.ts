@@ -39,7 +39,7 @@ import { ATTACHMENTS_HEADING, FILE_BLOCK, FROM_PREFIX, NOTE_ENTRY } from "./entr
 import { describe, HttpError, optionalText } from "./errors.ts";
 import { homePath } from "./paths.ts";
 import { mentionedPaths, viewFile } from "./files.ts";
-import { isThinkingLevel, THINKING_LEVELS } from "./models.ts";
+import { isThinkingLevel, supportsFastMode, THINKING_LEVELS } from "./models.ts";
 import { writePiSession } from "./pi-sessions.ts";
 import { snippet } from "./projection.ts";
 import { expandPromptTemplate, expandSkillCommand } from "./prompts.ts";
@@ -71,6 +71,12 @@ export interface SubmitRequest {
     inlineFiles?: boolean;
 }
 
+type ConfigureRequest = {
+    model?: { provider: string; modelId: string };
+    thinkingLevel?: string;
+    fastMode?: boolean;
+    cwd?: string;
+};
 /** Attached images that also go to the model itself, when it takes images. */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_INLINE_IMAGE = 5 * 1024 * 1024;
@@ -137,6 +143,8 @@ function checkModel(asked: { provider?: unknown; modelId?: unknown } | undefined
 
 export class Commands {
     readonly #app: PocketApp;
+    /** Keep each configuration's read, write, and activity together across simultaneous browser requests. */
+    readonly #configuring = new Map<ConversationId, Promise<void>>();
 
     constructor(app: PocketApp) {
         this.#app = app;
@@ -758,15 +766,22 @@ export class Commands {
         return result;
     }
 
-    async configure(
-        id: ConversationId,
-        user: User,
-        request: {
-            model?: { provider: string; modelId: string };
-            thinkingLevel?: string;
-            cwd?: string;
-        },
-    ): Promise<void> {
+    async configure(id: ConversationId, user: User, request: ConfigureRequest): Promise<void> {
+        const previous = this.#configuring.get(id) ?? Promise.resolve();
+        const next = previous.catch(() => {}).then(() => this.#configure(id, user, request));
+
+        this.#configuring.set(id, next);
+
+        try {
+            await next;
+        } finally {
+            if (this.#configuring.get(id) === next) {
+                this.#configuring.delete(id);
+            }
+        }
+    }
+
+    async #configure(id: ConversationId, user: User, request: ConfigureRequest): Promise<void> {
         const app = this.#app;
 
         app.requireSee(user, id);
@@ -780,6 +795,10 @@ export class Commands {
             !isThinkingLevel(request.thinkingLevel)
         ) {
             throw new HttpError(400, `thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
+        }
+
+        if (request.fastMode !== undefined && typeof request.fastMode !== "boolean") {
+            throw new HttpError(400, "fastMode must be a boolean");
         }
 
         optionalText(request.cwd, "cwd");
@@ -805,6 +824,17 @@ export class Commands {
             );
         }
 
+        if (request.fastMode === true && !supportsFastMode(model)) {
+            throw new HttpError(400, "Fast mode requires an OpenAI Responses model");
+        }
+
+        // A different provider must never inherit paid priority processing. Returning to OpenAI starts off.
+        const wasFastMode =
+            current?.serviceTier === "priority" &&
+            current.model !== undefined &&
+            supportsFastMode(app.models.getModel(current.model.provider, current.model.modelId));
+        const fastMode = supportsFastMode(model) && (request.fastMode ?? wasFastMode);
+        const serviceTier = supportsFastMode(model) ? (fastMode ? "priority" : "default") : null;
         const wanted = (request.thinkingLevel ??
             current?.thinkingLevel ??
             "off") as ModelThinkingLevel;
@@ -823,6 +853,7 @@ export class Commands {
                           },
                       }),
                 thinkingLevel,
+                serviceTier,
                 ...(cwd === undefined ? {} : { cwd }),
             },
             context,
@@ -857,6 +888,10 @@ export class Commands {
             thinkingLevel !== (current?.thinkingLevel ?? "off")
         ) {
             changes.push(`set thinking to ${thinkingLevel}`);
+        }
+
+        if (fastMode !== wasFastMode) {
+            changes.push(`turned fast mode ${fastMode ? "on" : "off"}`);
         }
 
         if (cwd !== undefined && cwd !== current?.cwd) {
@@ -1214,6 +1249,7 @@ export class Commands {
                 ? {}
                 : {
                       model: ref,
+                      ...(!supportsFastMode(model) ? { serviceTier: null } : {}),
                       thinkingLevel: clampThinkingLevel(
                           model,
                           (source?.thinkingLevel ?? "off") as ModelThinkingLevel,
@@ -1395,6 +1431,9 @@ export class Commands {
                               ...(source?.thinkingLevel === undefined
                                   ? {}
                                   : { thinkingLevel: source.thinkingLevel }),
+                              ...(source?.serviceTier === undefined
+                                  ? {}
+                                  : { serviceTier: source.serviceTier }),
                               ...(source?.instructions === undefined
                                   ? {}
                                   : { instructions: source.instructions }),
