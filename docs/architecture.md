@@ -23,7 +23,7 @@ Some state lives in this process alone, and a restart forgets it. For example:
 
 **Its parts:**
 
-- `commands`, `collab`, `alerts`, `providers`, `schedules`, `goals`, `shell`, `spend`
+- `commands`, `collab`, `alerts`, `providers` (sign-ins and cached OpenAI account usage), `schedules`, `goals`, `shell`, `spend`
 - `workspace`, `transcripts`, `attribution`, `piSessions`, `pip`, `watches`, `hooks`, `memory`
 - `browsers`
 
@@ -129,6 +129,7 @@ Where the other checks live:
 
 - **Commands and collaboration** check steering and driving themselves (`requireSteer`, `requireDriver`). They are called from routes, from tasks, and from each other.
 - **Owner-only settings** are checked in `http/api.ts`: extension modules, provider sign-ins, restart. Changing people's access, the approval rule, and the default model for new sessions is checked in `app.ts`.
+- **OpenAI usage** is account-wide and contains no session data. Any signed-in person may read its weekly percentage; the server asks OpenAI with Pi's subscription sign-in at most once a minute, shared by every tab.
 - **Invites** are checked in `http/api.ts` too: viewers and people invited to one session cannot create them, and only the owner makes an owner invite. An invite lasts one of `INVITE_MINUTES` (`auth.ts`; an owner invite, always 15) and is kept in `config.json` by its code's hash, so a day's or a week's outlives a restart. Only whoever made one ends it early (`POST /api/invite/cancel`), as the invite sheet does with the one it showed when its settings change, and with one that answers after it closed. One person keeps at most `MAX_INVITES` (`config.ts`) live, their oldest ending first; removing someone ends theirs, and a new owner token ends owner invites not yet used.
 - **The workspace's path helpers** (`conversationFile`, `readableFile`) leave seeing the conversation to their caller.
 

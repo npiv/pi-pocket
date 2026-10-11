@@ -362,6 +362,10 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, app.spend.summary(user));
         }
 
+        if (first === "openai-usage" && method === "GET") {
+            return json(response, 200, (await app.providers.openAIUsage()) ?? null);
+        }
+
         if (first === "spend" && method === "POST") {
             const body = await readJson<{ session?: unknown; person?: unknown; budget?: unknown }>(
                 request,

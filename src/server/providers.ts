@@ -9,6 +9,7 @@ import type { PocketApp } from "./app.ts";
 import type { User } from "./config.ts";
 import { describe, HttpError } from "./errors.ts";
 import { modelList } from "./models.ts";
+import { OpenAIUsage } from "./openai-usage.ts";
 
 interface AuthFlow {
     id: string;
@@ -20,6 +21,7 @@ interface AuthFlow {
 export class Providers {
     readonly #app: PocketApp;
     readonly #flows = new Map<string, AuthFlow>();
+    #openAIUsage?: OpenAIUsage;
 
     constructor(app: PocketApp) {
         this.#app = app;
@@ -50,6 +52,15 @@ export class Providers {
                 models: models.getModels(provider.id).length,
             };
         });
+    }
+
+    /**
+     * OpenAI's weekly subscription allowance. The reader caches both a value and an unavailable result for a minute.
+     */
+    openAIUsage() {
+        this.#openAIUsage ??= new OpenAIUsage(this.#app.models);
+
+        return this.#openAIUsage.get();
     }
 
     startLogin(user: User, providerId: string, type: "api_key" | "oauth"): string {

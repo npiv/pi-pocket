@@ -14,6 +14,7 @@ import { loadFiles, mentionAt, mentionText, suggestFiles } from "./files.js";
 import { remember, searchHistory, sentHistory } from "./history.js";
 import {
     actions,
+    api,
     attempt,
     canSteer,
     collab,
@@ -1365,9 +1366,43 @@ function PlacesButton() {
     </button>`;
 }
 
-/** Under the message box: who is here, how full the context is, the cache, the spend, and Lancet Guard. */
+/** OpenAI's account-wide weekly allowance, refreshed a little after the server's one-minute cache expires. */
+function useOpenAIUsage() {
+    const [usage, setUsage] = useState(null);
+
+    useEffect(() => {
+        let active = true;
+
+        const load = async () => {
+            try {
+                const next = await api("openai-usage");
+
+                if (active) {
+                    setUsage(next);
+                }
+            } catch {
+                if (active) {
+                    setUsage(null);
+                }
+            }
+        };
+
+        void load();
+        const timer = setInterval(load, 61_000);
+
+        return () => {
+            active = false;
+            clearInterval(timer);
+        };
+    }, []);
+
+    return usage;
+}
+
+/** Under the message box: who is here, context and weekly usage, the cache, spend, and Lancet Guard. */
 function StatusLine() {
     const { view, connection, guard } = store.state;
+    const openAIUsage = useOpenAIUsage();
     const stats = view.stats ?? {};
     const window = view.agent?.contextWindow;
     const parts = [];
@@ -1437,6 +1472,26 @@ function StatusLine() {
                 <${Icon} name="shield" size=${11} />
                 ${failed ? "guard failed" : guard.enabled ? "guard on" : "guard off"}
             </button>`,
+        );
+    }
+
+    if (openAIUsage?.remaining !== undefined) {
+        const reset =
+            openAIUsage.resetAt === undefined
+                ? ""
+                : ` · resets ${new Date(openAIUsage.resetAt * 1000).toLocaleString()}`;
+        const days =
+            openAIUsage.resetAt === undefined
+                ? undefined
+                : Math.max(0, Math.ceil((openAIUsage.resetAt * 1000 - Date.now()) / 86_400_000));
+
+        parts.push(
+            html`<span
+                class="weekly-usage"
+                title=${`OpenAI weekly usage remaining${reset}`}
+            >
+                week ${openAIUsage.remaining}%${days === undefined ? "" : ` / ${days}d`}
+            </span>`,
         );
     }
 
