@@ -2,6 +2,7 @@
  * What browsers get: compact, display-ready JSON derived from the committed conversation view. Big strings (file
  * contents in tool arguments, long tool output) are clipped; a client asks for the full entry when the user expands it.
  */
+import { estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { EntryRecord, LiveState, UsageState } from "@earendil-works/pi-durable";
 import {
     ATTACHMENTS_HEADING,
@@ -446,6 +447,11 @@ export type ClientStats = {
     cacheRate?: number;
     /** Tokens of the newest response's prompt plus answer: roughly what the context holds. */
     contextTokens?: number;
+    /**
+     * `contextTokens` is an estimate: no response came since the context was compacted or started fresh, so it is what
+     * the summary and the messages kept come to, without the prompt.
+     */
+    contextEstimated?: boolean;
 };
 
 type UsageNumbers = {
@@ -486,11 +492,27 @@ export function projectStats(
 
     const prompt = input + cacheRead + cacheWrite;
     let contextTokens: number | undefined;
+    let contextEstimated = false;
+    // The newest compaction or fresh start: a response before it measured a context that is gone. By id, not place: a
+    // conversation's view puts its head marker first, before the messages it keeps.
+    let boundary: EntryRecord | undefined;
+
+    for (const entry of entries) {
+        if (
+            (entry.kind === "pi.compaction" || entry.kind === "pi.reset") &&
+            entry.id > (boundary?.id ?? Number.NEGATIVE_INFINITY)
+        ) {
+            boundary = entry;
+        }
+    }
 
     for (let index = entries.length - 1; index >= 0; index--) {
         const entry = entries[index]!;
 
-        if (entry.kind !== "pi.assistant") {
+        if (
+            entry.kind !== "pi.assistant" ||
+            entry.id < (boundary?.id ?? Number.NEGATIVE_INFINITY)
+        ) {
             continue;
         }
 
@@ -515,10 +537,33 @@ export function projectStats(
         }
     }
 
+    // Nothing measured since: what the summary and the messages kept after it come to, until an answer measures it.
+    if (contextTokens === undefined && boundary !== undefined) {
+        const head = boundary.head ?? boundary.id;
+
+        let estimate = 0;
+
+        try {
+            for (const kept of entries) {
+                if (kept.id >= head) {
+                    for (const message of kept.model ?? []) {
+                        estimate += estimateMessageTokens(message);
+                    }
+                }
+            }
+
+            contextTokens = estimate;
+            contextEstimated = true;
+        } catch {
+            // A message the estimate cannot read: no figure, rather than no view.
+        }
+    }
+
     return {
         cost,
         ...(prompt > 0 ? { cacheRate: cacheRead / prompt } : {}),
         ...(contextTokens === undefined ? {} : { contextTokens }),
+        ...(contextEstimated ? { contextEstimated } : {}),
     };
 }
 

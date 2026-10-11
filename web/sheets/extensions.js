@@ -1,4 +1,5 @@
-// Extensions: the modules the owner can turn on and off, Lancet Guard, and who may allow risky calls.
+// Extensions: the modules the owner can turn on and off, Lancet Guard, who may allow risky calls, and when PiP compacts
+// its context.
 import { useEffect, useState } from "preact/hooks";
 import { api, attempt, closeSheet, store } from "../store.js";
 import { html, Loader, Sheet, shortPath, Switch } from "../ui.js";
@@ -48,6 +49,39 @@ function ApprovalRule({ owner }) {
             label=${`Approvals need someone else: ${others ? "on" : "off"}`}
             onChange=${change}
         />
+    </div>`;
+}
+
+/** When PiP compacts its own context: once idle above so many tokens (`pip-compact.ts`), or only as sessions do. */
+const PIP_COMPACT = [
+    [40000, "Above 40k tokens"],
+    [60000, "Above 60k tokens"],
+    [100000, "Above 100k tokens"],
+    [0, "As sessions do"],
+];
+
+function PipCompactAt({ owner }) {
+    const at = store.state.server?.pipCompactAt ?? 60000;
+    const change = (event) =>
+        attempt(() => api("settings", { pipCompactAt: Number(event.currentTarget.value) }));
+
+    return html`<div class="setting wrap">
+        <div class="grow">
+            <div class="small">Compact PiP's context</div>
+            <div class="muted small">
+                Once PiP is idle above this, older messages become a short summary.
+            </div>
+        </div>
+        <select
+            aria-label="Compact PiP's context"
+            value=${String(at)}
+            disabled=${!owner}
+            onChange=${change}
+        >
+            ${PIP_COMPACT.map(
+                ([value, label]) => html`<option value=${String(value)}>${label}</option>`,
+            )}
+        </select>
     </div>`;
 }
 
@@ -134,6 +168,11 @@ export function ExtensionsSheet() {
                         module.file === "guard.ts" &&
                         module.enabled &&
                         html`<${ApprovalRule} owner=${owner} />`
+                    }
+                    ${
+                        module.file === "pip.ts" &&
+                        module.enabled &&
+                        html`<${PipCompactAt} owner=${owner} />`
                     }
                     ${module.error && html`<div class="error-box small">${module.error}</div>`}
                     <div class="muted small mono">

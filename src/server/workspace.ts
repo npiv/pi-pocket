@@ -286,7 +286,7 @@ export class Workspace {
     /**
      * A file a person may read whole through a session: the viewer, and files sent along with a message. As
      * `conversationFile`, but Pi's own folder (sign-ins, settings) and this app's data (people, tokens, the database)
-     * are the owner's alone. Uploads and worktrees, which sessions use, are not kept back.
+     * are the owner's alone. Uploads, worktrees, and PiP's clones (`repos/`), which sessions use, are not kept back.
      */
     readableFile(user: User, id: ConversationId, path: string): string {
         const file = this.conversationFile(user, id, path);
@@ -309,7 +309,10 @@ export class Workspace {
 
         if (
             inside(real(getAgentDir())) ||
-            (inside(data) && !inside(join(data, "uploads")) && !inside(join(data, "worktrees")))
+            (inside(data) &&
+                !inside(join(data, "uploads")) &&
+                !inside(join(data, "worktrees")) &&
+                !inside(join(data, "repos")))
         ) {
             throw new HttpError(404, "Not found");
         }

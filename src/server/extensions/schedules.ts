@@ -7,6 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import type { Schedule } from "../docs.ts";
 import type { PocketHost } from "../host.ts";
+import type { Pip } from "../pip.ts";
 import { SCHEDULED_PREFIX, SCHEDULES_EXTENSION } from "../schedules.ts";
 import { describeMoment, describeRepeat, WHEN_HELP } from "../when.ts";
 
@@ -70,12 +71,20 @@ export default function createSchedules(host: PocketHost) {
 
             const requestedBy = host.requesterOf(api.conversationId);
             const key = `${api.taskId}:${api.callId}`;
-            const added = await host.schedules.add(api.conversationId, {
+            const request = {
                 when: args.when,
                 text: args.message,
                 key,
                 ...(requestedBy === undefined ? {} : { requestedBy }),
-            });
+            };
+            const make = () => host.schedules.add(api.conversationId, request);
+            // PiP's own schedules count toward its hourly actions. A server started before PiP counted them has no
+            // countSchedule: it schedules as before until its restart.
+            const pip = host.pip as Partial<Pick<Pip, "countSchedule">>;
+            const added =
+                typeof pip.countSchedule === "function"
+                    ? await pip.countSchedule(api.conversationId, key, make)
+                    : await make();
 
             return reply(`Scheduled ${line(added)}`);
         },

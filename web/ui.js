@@ -694,10 +694,13 @@ export function shortPath(path, home) {
 
 const ICONS = {
     menu: "M3 6h18M3 12h18M3 18h18",
+    // PiP: a small orb with a glint.
+    pip: "M12 20a8 8 0 100-16 8 8 0 000 16zM8.5 11a3.5 3.5 0 013.5-3.5",
     more: "M5 12h.01M12 12h.01M19 12h.01",
     close: "M6 6l12 12M18 6L6 18",
     send: "M12 19V5M5 12l7-7 7 7",
     stop: "M7 7h10v10H7z",
+    mic: "M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM19 11a7 7 0 01-14 0M12 18v3",
     clip: "M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9",
     plus: "M12 5v14M5 12h14",
     artifact: "M4 5h16v14H4zM4 9h16M8 5v4",
@@ -737,6 +740,8 @@ const ICONS = {
     monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
     terminal: "M4 5h16v14H4zM8 10l2 2-2 2M12 14h4",
     fit: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+    // Compact: two rules, and what is between them pressed toward the middle.
+    compact: "M4 3h16M4 21h16M12 6v5M9 8l3 3 3-3M12 18v-5M9 16l3-3 3 3",
 };
 
 /** An icon's SVG path, for marks drawn outside Preact (gestures.js). */
@@ -816,6 +821,74 @@ export function Boot({ caption = "starting", detail = "", inline = false }) {
         <div class="boot-caption">${caption}</div>
         ${detail && html`<div class="boot-detail">${detail}</div>`}
     </div>`;
+}
+
+/** The element each edge was last published from (`useEdge`): one replacing another is not undone as the old goes. */
+const edges = new Map();
+
+/**
+ * A ref that keeps `name` (a CSS variable on the page's root) at where its element reaches, `measure(rect)` px, as it
+ * or the window resizes; unset while the element is hidden or gone. PiP's window keeps clear of the session's top bar
+ * with it (`--topbar-h`).
+ */
+export function useEdge(name, measure) {
+    const [ref] = useState(() => {
+        let stop = null;
+
+        const publish = (element) => {
+            const root = document.documentElement;
+
+            const update = () => {
+                // Another element took the name since (a frame queued before this one went): it says, not this one.
+                if (edges.get(name) !== element) {
+                    return;
+                }
+
+                const rect = element.getBoundingClientRect();
+
+                if (rect.height === 0) {
+                    root.style.removeProperty(name);
+                } else {
+                    root.style.setProperty(name, `${Math.max(0, Math.round(measure(rect)))}px`);
+                }
+            };
+
+            const observer = new ResizeObserver(update);
+            // A pane popping in (`popin` scales it) moves the element without resizing it: measured again as an
+            // animation around it ends.
+            let frame = 0;
+
+            const settled = () => {
+                cancelAnimationFrame(frame);
+                frame = requestAnimationFrame(update);
+            };
+
+            edges.set(name, element);
+            observer.observe(element);
+            addEventListener("resize", update);
+            document.addEventListener("animationend", settled);
+            update();
+
+            return () => {
+                observer.disconnect();
+                removeEventListener("resize", update);
+                document.removeEventListener("animationend", settled);
+                cancelAnimationFrame(frame);
+
+                if (edges.get(name) === element) {
+                    edges.delete(name);
+                    root.style.removeProperty(name);
+                }
+            };
+        };
+
+        return (element) => {
+            stop?.();
+            stop = element ? publish(element) : null;
+        };
+    });
+
+    return ref;
 }
 
 /**
@@ -1078,4 +1151,13 @@ export function item(label, run, hint) {
         <span>${label}</span>
         ${hint && html`<span class="muted small">${hint}</span>`}
     </button>`;
+}
+
+/** Posted JSON laid out for people (Pi gets it compact); anything else as it came. */
+export function readable(text) {
+    try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+        return text;
+    }
 }

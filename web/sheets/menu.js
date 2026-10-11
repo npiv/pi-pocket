@@ -1,9 +1,10 @@
 // The menu: what can be done in this session and in the app.
 import { browserAvailable, displayUrl, setBrowserOpen } from "../browser.js";
 import { chatUnread } from "../chat.js";
-import { schedulesAvailable } from "../commands.js";
+import { schedulesAvailable, triggersOn, watchAvailable, watchPr } from "../commands.js";
 import { filesAvailable, setFilesOpen } from "../files-panel.js";
 import { peeksOn, togglePeeks } from "../peeks.js";
+import { openPip, pipAvailable, pipUnread } from "../pip.js";
 import { setArchived } from "../sessions.js";
 import {
     actions,
@@ -21,6 +22,7 @@ import {
 import { isPinned, paletteOf, togglePin } from "../theme.js";
 import { currentTrust, trustAvailable } from "../trust.js";
 import { branchAvailable } from "./branch.js";
+import { memoryAvailable, memoryHint, useMemory } from "./memory.js";
 import { defaultLabel, defaultsKept } from "./model.js";
 import { copyText, html, Icon, item, Sheet, shortPath } from "../ui.js";
 
@@ -85,6 +87,17 @@ function Places() {
             label: "Branch",
             run: () => openSheet({ type: "branch" }),
         },
+        pipAvailable() && {
+            id: "pip",
+            icon: "pip",
+            label: "PiP",
+            dot: pipUnread(),
+            dotLabel: "something new",
+            run: () => {
+                openPip();
+                closeSheet();
+            },
+        },
         server?.peeks === true && {
             id: "peeks",
             icon: "tiles",
@@ -104,7 +117,7 @@ function Places() {
                 type="button"
                 class=${`place ${place.on ? "on" : ""}`}
                 data-place=${place.id}
-                aria-label=${place.count > 0 ? `${place.label}, ${place.count} ${place.counted ?? ""}`.trim() : place.dot ? `${place.label}, a page open` : place.label}
+                aria-label=${place.count > 0 ? `${place.label}, ${place.count} ${place.counted ?? ""}`.trim() : place.dot ? `${place.label}, ${place.dotLabel ?? "a page open"}` : place.label}
                 aria-pressed=${place.on === undefined ? undefined : place.on ? "true" : "false"}
                 onClick=${place.run}
             >
@@ -167,6 +180,7 @@ export function MenuSheet() {
         !turns.driver ||
         !store.state.presence.some((person) => person.id === turns.driver);
     const instructions = view.agent?.instructions;
+    const memory = useMemory();
 
     return html`<${Sheet} title=${conversation?.title ?? "Menu"} onClose=${closeSheet}>
         <${Places} />
@@ -231,7 +245,21 @@ export function MenuSheet() {
         ${session && steer && driving && item("Instructions for Pi", () => openSheet({ type: "instructions" }), instructions ? "on" : "none")}
         ${conversation && steer && driving && item("Compact context", () => openSheet({ type: "compact" }), "summarize older messages")}
         ${conversation && steer && driving && item("New context", () => openSheet({ type: "reset" }), "Pi starts fresh; history stays")}
+        ${conversation && memoryAvailable() && item("Memory", () => openSheet({ type: "memory" }), memoryHint(memory))}
         ${schedulesAvailable() && item("Scheduled messages", () => openSheet({ type: "schedules" }), view.schedules.length === 0 ? "none" : `${view.schedules.length} coming`)}
+        ${
+            watchAvailable() &&
+            steer &&
+            view.watch?.status !== "watching" &&
+            item(
+                "Watch pull request",
+                () => {
+                    closeSheet();
+                    attempt(() => watchPr());
+                },
+                "fix CI, answer reviews",
+            )
+        }
         ${
             conversation &&
             item("Copy link", () =>
@@ -286,6 +314,7 @@ export function MenuSheet() {
             ${collab() && item("Notifications", () => openSheet({ type: "notifications" }), "Pi finished, approvals, chat")}
             ${item("Running now", () => openSheet({ type: "running" }), "everything Pi is doing")}
             ${item("Spend", () => openSheet({ type: "spend" }), me?.role === "owner" ? "by person and session, limits" : "yours")}
+            ${triggersOn() && me?.role !== "viewer" && item("Webhooks and watches", () => openSheet({ type: "hooks" }), "GitHub, other services")}
             ${item("Providers", () => openSheet({ type: "providers" }))}
             ${item("Extensions", () => openSheet({ type: "extensions" }), store.state.guard?.enabled ? "Lancet Guard on" : store.state.guard?.available ? "Lancet Guard off" : "")}
             ${

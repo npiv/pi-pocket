@@ -31,6 +31,7 @@ import {
     type HarnessSettings,
     LiveDoc,
     type LiveState,
+    type Registry,
     type Storage,
     UsageDoc,
     type UsageState,
@@ -54,6 +55,7 @@ import {
     ChatDoc,
     type ChatMessage,
     DecisionsDoc,
+    MemoryDoc,
     type SessionMeta,
     SessionsDoc,
     type SubagentRecord,
@@ -65,9 +67,14 @@ import { Goals } from "./goals.ts";
 import { type ApprovalRequest, Approvals, type PocketHost } from "./host.ts";
 import { type GuardStatus, LancetGuard } from "./lancet.ts";
 import { takeLock } from "./lock.ts";
+import { Memory } from "./memory.ts";
 import { isThinkingLevel, modelList, resolveModel, THINKING_LEVELS } from "./models.ts";
 import { configureHttp } from "./net.ts";
 import { PiSessions } from "./pi-sessions.ts";
+import { Hooks } from "./hooks.ts";
+import { Pip, PIP_EXTENSION } from "./pip.ts";
+import { PIP_COMPACT_CHOICES, PipCompaction } from "./pip-compact.ts";
+import { RepoWatches } from "./repo-watches.ts";
 import { snippet } from "./projection.ts";
 import { loadPromptTemplates, type PromptTemplate, type SkillCommand } from "./prompts.ts";
 import { Providers } from "./providers.ts";
@@ -88,6 +95,7 @@ import {
 } from "./skills.ts";
 import { Spend } from "./spend.ts";
 import { Transcripts } from "./transcripts.ts";
+import { Watches } from "./watches.ts";
 import { Workspace } from "./workspace.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -105,6 +113,8 @@ const GUARD_FILE = "guard.ts";
 /** The extension module with the browser tool. While it is off, the Browser panel is off too. */
 const BROWSER_FILE = "browser.ts";
 const BROWSER_EXTENSION = "pocket-browser";
+/** The extension module that is PiP. */
+const PIP_FILE = "pip.ts";
 
 /** The most peek tiles a tab gets live at once: the ones on its screen, which a tall screen fits a handful of. */
 export const MAX_PEEKS = 12;
@@ -234,6 +244,18 @@ export class PocketApp {
     readonly transcripts = new Transcripts(this);
     /** Pi's sessions from the terminal, which the owner can continue here. */
     readonly piSessions = new PiSessions(this);
+    /** PiP, the owner's assistant: its conversation, what its tools do, and the follows that report to it. */
+    readonly pip = new Pip(this);
+    /** PiP's context kept small: compacted sooner than a session's, with summaries of its own (`pip-compact.ts`). */
+    readonly pipCompaction = new PipCompaction(this);
+    /** Sessions' watches of their pull requests (`watches.ts`). */
+    readonly watches = new Watches(this);
+    /** PiP's standing orders on GitHub repositories: what happens there goes to PiP or a session (`repo-watches.ts`). */
+    readonly repoWatches = new RepoWatches(this);
+    /** Webhooks: addresses other services post to, each a message to a session or PiP (`hooks.ts`). */
+    readonly hooks = new Hooks(this);
+    /** Lessons Pi keeps across sessions, for a project or everywhere. */
+    readonly memory = new Memory(this);
     /** Each conversation's browser page, which Pi and the people in the conversation share. */
     readonly browsers: Browsers;
     readonly #clients = new Set<Client>();
@@ -252,6 +274,8 @@ export class PocketApp {
     readonly #subagents = new Map<ConversationId, SubagentsOf>();
     #sessions: Record<string, SessionMeta> = {};
     #sessionsTimer: NodeJS.Timeout | undefined;
+    /** The extensions installed now: every conversation runs with them, except PiP's own, which PiP alone selects. */
+    #registry: Registry | undefined;
     #unsubscribeCommits: (() => void) | undefined;
     #unsubscribeApprovals: (() => void) | undefined;
     #unsubscribeBrowsers: (() => void) | undefined;
@@ -373,9 +397,15 @@ export class PocketApp {
             schedules: this.schedules,
             goals: this.goals,
             browsers: this.browsers,
+            pip: this.pip,
+            pipCompaction: this.pipCompaction,
+            watches: this.watches,
+            repoWatches: this.repoWatches,
+            memory: this.memory,
         };
 
         this.host = host;
+        this.#registry = registry;
         const dropIn = join(this.dataDir, "extensions");
 
         try {
@@ -565,6 +595,7 @@ export class PocketApp {
 
                 if (!busy) {
                     this.spend.runEnded(id);
+                    this.pipCompaction.runEnded(id);
 
                     if (this.#sessions[String(id)] !== undefined) {
                         this.#endedAt.set(id, Date.now());
@@ -603,6 +634,8 @@ export class PocketApp {
                     () => {},
                 );
             }
+        } else if (kind === MemoryDoc.definition.kind) {
+            this.memory.committed();
         } else if (ROOM_DOCS.has(kind) && id !== undefined) {
             if (kind === ChatDoc.definition.kind) {
                 if (
@@ -641,6 +674,35 @@ export class PocketApp {
         return sessionsChanged;
     }
 
+    /** How model requests stream here: Pi's timeout and retries. Pi Durable's requests and PiP's summaries use them. */
+    streamSettings(): {
+        timeoutMs: number;
+        maxRetryDelayMs?: number;
+        maxRetries?: number;
+        serviceTier: "default";
+    } {
+        const read = <T>(get: () => T): T | undefined => {
+            try {
+                return get();
+            } catch {
+                return undefined;
+            }
+        };
+
+        const provider = read(() => this.settings.getProviderRetrySettings());
+        const idle = read(() => this.settings.getHttpIdleTimeoutMs()) ?? 300_000;
+
+        return {
+            // Fast mode is opt-in, even if an OpenAI project's default tier is priority.
+            serviceTier: "default",
+            timeoutMs: provider?.timeoutMs ?? (idle === 0 ? 2_147_483_647 : idle),
+            ...(provider?.maxRetryDelayMs === undefined
+                ? {}
+                : { maxRetryDelayMs: provider.maxRetryDelayMs }),
+            ...(provider?.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
+        };
+    }
+
     #harnessSettings(): HarnessSettings {
         const settings = this.settings;
 
@@ -652,22 +714,20 @@ export class PocketApp {
             }
         };
 
-        return {
-            get stream() {
-                const provider = safe(() => settings.getProviderRetrySettings());
-                const idle = safe(() => settings.getHttpIdleTimeoutMs()) ?? 300_000;
+        const registry = () => this.#registry;
+        const stream = () => this.streamSettings();
 
-                return {
-                    // Fast mode is opt-in, even if an OpenAI project's default tier is priority.
-                    serviceTier: "default",
-                    timeoutMs: provider?.timeoutMs ?? (idle === 0 ? 2_147_483_647 : idle),
-                    ...(provider?.maxRetryDelayMs === undefined
-                        ? {}
-                        : { maxRetryDelayMs: provider.maxRetryDelayMs }),
-                    ...(provider?.maxRetries === undefined
-                        ? {}
-                        : { maxRetries: provider.maxRetries }),
-                };
+        return {
+            // Every installed extension, in install order, but PiP's: its tools and prompt are for its conversation only,
+            // which selects it by name (`pip.ts`).
+            get extensions() {
+                return registry()
+                    ?.snapshot()
+                    .installed()
+                    .filter((extension) => extension.name !== PIP_EXTENSION);
+            },
+            get stream() {
+                return stream();
             },
             get compaction() {
                 return safe(() => settings.getCompactionSettings()) ?? {};
@@ -710,11 +770,13 @@ export class PocketApp {
         this.#log(`[${level}] ${message}`);
 
         for (const client of this.#clients) {
-            // Server-wide notices can name other sessions' folders: people invited to one session do not get them.
+            // Server-wide notices can name other sessions' folders: people invited to one session do not get them. One
+            // about PiP reaches the tabs with its panel open too: the panel has no notices of its own.
             const reaches =
                 conversationId === undefined
                     ? client.user.sessions === undefined
-                    : client.conversationId === conversationId &&
+                    : (client.conversationId === conversationId ||
+                          client.pip?.conversationId === conversationId) &&
                       this.canSee(client.user, conversationId);
 
             if (reaches) {
@@ -751,6 +813,7 @@ export class PocketApp {
 
         client.send("hello", this.#helloFor(client, hello));
         client.send("sessions", this.sessions(client.user));
+        this.#sendPip(client);
 
         if (arriving) {
             this.#peopleChanged(client.user.id);
@@ -818,6 +881,7 @@ export class PocketApp {
         }
 
         client.peeks = undefined;
+        this.#closePip(client);
 
         if (!this.#online(client.user.id)) {
             this.#peopleChanged(client.user.id);
@@ -938,6 +1002,107 @@ export class PocketApp {
         );
     }
 
+    /**
+     * A tab opened or closed its PiP panel. While it is open, the tab gets PiP's conversation as `pipview` events, from a
+     * view of its own beside the one the tab shows, and counts as looking at PiP, so its answers push nothing. Opening
+     * makes this person's PiP the first time. A request numbered `seq` below one already taken arrived late, and is
+     * dropped.
+     */
+    async setPip(user: User, connection: string, on: boolean, seq?: number): Promise<void> {
+        const id = on ? await this.pip.ensure(user) : undefined;
+
+        for (const client of this.#clients) {
+            if (client.user.id !== user.id || client.connection !== connection) {
+                continue;
+            }
+
+            if (seq !== undefined) {
+                if (seq <= (client.pipSeq ?? -Infinity)) {
+                    continue;
+                }
+
+                client.pipSeq = seq;
+            }
+
+            if (client.pip !== undefined && client.pip.conversationId !== id) {
+                this.#closePip(client);
+            }
+
+            if (id !== undefined && client.pip === undefined) {
+                void this.#openPip(client, id);
+            }
+        }
+
+        // Made just now: the tab learns its id from the PiP state.
+        this.#scheduleSessions();
+    }
+
+    async #openPip(tab: Client, id: ConversationId): Promise<void> {
+        const panel: Client = {
+            id: tab.id,
+            user: tab.user,
+            connection: tab.connection,
+            conversationId: id,
+            get visible() {
+                return tab.visible;
+            },
+            sentEntries: new Set<number>(),
+            orderKey: "",
+            // Only the view: the panel has no chat, notes, or browser of its own.
+            send: (event, data) => {
+                if (event === "view") {
+                    tab.send("pipview", data);
+                }
+            },
+        };
+
+        tab.pip = panel;
+        let room: Room;
+
+        try {
+            room = await this.room(id);
+        } catch (error) {
+            if (tab.pip === panel) {
+                tab.pip = undefined;
+            }
+
+            this.#log(`PiP's view did not open: ${describe(error)}`);
+
+            return;
+        }
+
+        // The tab left, or closed the panel, while the view opened.
+        if (!this.#clients.has(tab) || tab.pip !== panel) {
+            this.releaseRoom(room);
+
+            return;
+        }
+
+        room.keepOpen();
+        room.clients.add(panel);
+        room.push(panel, true);
+    }
+
+    #closePip(tab: Client): void {
+        const panel = tab.pip;
+
+        tab.pip = undefined;
+
+        if (panel?.conversationId !== undefined) {
+            this.#leaveRoom(panel, panel.conversationId);
+        }
+    }
+
+    /** Send a tab its person's PiP state, unless it is what the tab last got. */
+    #sendPip(client: Client): void {
+        const json = JSON.stringify(this.pip.state(client.user));
+
+        if (json !== client.pipSent) {
+            client.pipSent = json;
+            client.send("pip", JSON.parse(json) as unknown);
+        }
+    }
+
     /** A tab was hidden or shown: hidden tabs show their person as away, and let push notifications through. */
     setVisible(user: User, tab: string, visible: boolean): void {
         for (const client of this.#clients) {
@@ -972,7 +1137,7 @@ export class PocketApp {
         for (const client of this.#clients) {
             if (
                 client.user.id === userId &&
-                client.conversationId === id &&
+                (client.conversationId === id || client.pip?.conversationId === id) &&
                 client.visible !== false
             ) {
                 return true;
@@ -1066,9 +1231,19 @@ export class PocketApp {
         return current;
     }
 
-    /** People invited to one session see only that session and its subagents. */
+    /**
+     * People invited to one session see only that session and its subagents. A PiP is its own person's alone: its tools
+     * act as them, so anyone else who could write to it would act as them too.
+     */
     canSee(user: User, id: ConversationId): boolean {
-        return user.sessions === undefined || user.sessions.includes(String(this.rootOf(id)));
+        const root = this.rootOf(id);
+        const pip = this.#sessions[String(root)]?.pip;
+
+        if (pip !== undefined && pip !== user.id) {
+            return false;
+        }
+
+        return user.sessions === undefined || user.sessions.includes(String(root));
     }
 
     requireSee(user: User, id: ConversationId): void {
@@ -1313,6 +1488,10 @@ export class PocketApp {
                 approvalRule: this.config.approvalRule,
                 // The model and thinking level new sessions start with, or null for the last one picked.
                 defaultModel: this.config.defaultModel ?? null,
+                // This person may have a PiP, the assistant over every screen (`pip.ts`).
+                pip: this.pip.available(user),
+                // Tokens of context above which PiP compacts itself once idle; 0: only as sessions do.
+                pipCompactAt: this.pipCompaction.compactAt,
             },
         };
     }
@@ -1341,6 +1520,7 @@ export class PocketApp {
                         ? all
                         : all.filter((session) => scope.includes(String(session.id))),
                 );
+                this.#sendPip(client);
 
                 if (client.board === true) {
                     board ??= this.subagents();
@@ -1376,7 +1556,12 @@ export class PocketApp {
         }
 
         return Object.entries(this.#sessions)
-            .filter(([id]) => user?.sessions === undefined || user.sessions.includes(id))
+            .filter(
+                ([id, meta]) =>
+                    // PiP is not a session people pick: it shows in its own panel (`pip.ts`).
+                    meta.pip === undefined &&
+                    (user?.sessions === undefined || user.sessions.includes(id)),
+            )
             .map(([id, meta]) => {
                 const model = this.#agents.get(Number(id) as unknown as ConversationId)?.model;
                 const busy = this.#busy.has(Number(id) as unknown as ConversationId);
@@ -1418,6 +1603,16 @@ export class PocketApp {
         return this.#sessions[String(id)];
     }
 
+    /** Every session's catalogue entry, PiP's included, by id. */
+    sessionCatalogue(): Readonly<Record<string, SessionMeta>> {
+        return this.#sessions;
+    }
+
+    /** When a session's last run ended, since this server started. */
+    endedAt(id: ConversationId): number | undefined {
+        return this.#endedAt.get(id);
+    }
+
     async conversationTitle(id: ConversationId): Promise<string> {
         const meta = this.#sessions[String(id)];
 
@@ -1449,6 +1644,8 @@ export class PocketApp {
                 (meta === undefined ? `Conversation ${String(room.id)}` : "New session"),
             cwd: agent.cwd ?? meta?.cwd ?? this.defaultCwd,
             archived: meta?.archived === true,
+            // PiP's own conversation, opened as a page: some session things (a PR to watch) are not for it.
+            ...(meta?.pip === undefined ? {} : { pip: true }),
             ...(room.parent === undefined ? {} : { parent: room.parent }),
             ...(room.subagentName === undefined ? {} : { subagentName: room.subagentName }),
             // Each browser finds the source's title in its own session list, so only people who can open it get a link.
@@ -1927,6 +2124,10 @@ export class PocketApp {
             await this.browsers.closeAll();
         }
 
+        if (file === PIP_FILE && !enabled) {
+            await this.pip.stopAll();
+        }
+
         this.notice(
             enabled ? "info" : "warning",
             `${user.name} turned ${module.title} ${enabled ? "on" : "off"}.`,
@@ -1975,6 +2176,27 @@ export class PocketApp {
                 ? `${user.name} made approvals need someone other than who asked.`
                 : `${user.name} let anyone who can steer allow risky calls.`,
         );
+    }
+
+    /** The owner chooses when PiP compacts itself: above so many tokens of context once idle, or (0) as sessions do. */
+    async setPipCompactAt(user: User, tokens: unknown): Promise<void> {
+        if (user.role !== "owner") {
+            throw new HttpError(403, "Only the owner can do that");
+        }
+
+        if (typeof tokens !== "number" || !PIP_COMPACT_CHOICES.includes(tokens)) {
+            throw new HttpError(
+                400,
+                `pipCompactAt must be one of ${PIP_COMPACT_CHOICES.join(", ")}`,
+            );
+        }
+
+        if (tokens === this.pipCompaction.compactAt) {
+            return;
+        }
+
+        this.config.pipCompactAt = tokens;
+        await this.#refreshClients();
     }
 
     /**

@@ -67,6 +67,8 @@ interface PocketConfig {
     enabledExtensions?: string[];
     /** "others": a guest cannot allow a risky call that their own message led to. Absent: anyone who can steer may. */
     approvals?: ApprovalRule;
+    /** The tokens of context above which PiP compacts itself once idle; 0: only as sessions do. Absent: the default. */
+    pipCompactAt?: number;
 }
 
 /** Who may allow a risky tool call: anyone who can steer, or (for guests) only someone other than who asked. */
@@ -147,6 +149,21 @@ export class ConfigStore {
             delete this.#config.defaultModel;
         } else {
             this.#config.defaultModel = choice;
+        }
+
+        this.save();
+    }
+
+    /** The owner's choice of when PiP compacts itself (`pip-compact.ts`); undefined: its default. */
+    get pipCompactAt(): number | undefined {
+        return this.#config.pipCompactAt;
+    }
+
+    set pipCompactAt(tokens: number | undefined) {
+        if (tokens === undefined) {
+            delete this.#config.pipCompactAt;
+        } else {
+            this.#config.pipCompactAt = tokens;
         }
 
         this.save();

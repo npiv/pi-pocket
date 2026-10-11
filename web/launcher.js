@@ -6,6 +6,7 @@ import { browserAvailable, toggleBrowser } from "./browser.js";
 import { planAvailable, schedulesAvailable } from "./commands.js";
 import { filesAvailable, toggleFiles } from "./files-panel.js";
 import { togglePeeks } from "./peeks.js";
+import { openPip, pipAvailable } from "./pip.js";
 import { setArchived, workspaceOrder } from "./sessions.js";
 import { branchAvailable, headLabel } from "./sheets/branch.js";
 import { piSessionsAvailable } from "./sheets/pi-sessions.js";
@@ -223,6 +224,13 @@ function actionItems() {
                 icon: "archive",
                 run: () => setArchived([conversation.id], !conversation.archived),
             },
+        pipAvailable() && {
+            label: "Ask PiP",
+            detail: "your assistant, over any screen",
+            icon: "pip",
+            keys: "Alt A",
+            run: () => openPip(),
+        },
         {
             label: "Running now",
             detail: "everything Pi is doing",

@@ -30,6 +30,11 @@ export type SessionMeta = {
     worktree?: Worktree;
     /** The session of Pi's in the terminal this one continues, and how many messages its file had then. */
     fromPi?: { session: string; count: number };
+    /**
+     * The id of the person whose PiP this is: their assistant, which looks after their other sessions (`pip.ts`). PiP is
+     * kept out of the session list; an older Pi Pocket, which does not know this field, lists it as a session.
+     */
+    pip?: string;
 };
 
 /** The catalogue of user-facing sessions: ownerless conversations created by the app. Subagents are not listed. */
@@ -351,6 +356,43 @@ export const SpendDoc = defineDoc<{
     initial: () => ({ people: {}, counted: {} }),
 });
 
+export type Lesson = {
+    /** Short and stable: what Pi and people use to change or remove it. */
+    id: string;
+    text: string;
+    /** The project it is for (`memory.ts`: the repository's shared git folder, or the folder); absent: everywhere. */
+    project?: string;
+    /** The project's folder name, for people to read. */
+    projectName?: string;
+    /** The session it came from: a subagent's lesson is its session's. */
+    from?: { conversationId: number; title: string };
+    /** Who saved it, or whom Pi worked for when it did. */
+    by: string;
+    byPi: boolean;
+    createdAt: number;
+    updatedAt?: number;
+    /** Saved by Pi, or by someone who is not the owner: unused until the owner approves it. */
+    pending?: boolean;
+    /**
+     * A change to it in force that waits for the owner, as Pi or a guest proposed it: new text, or forgetting it. The
+     * lesson stays as it is until then.
+     */
+    proposal?: { text?: string; forget?: boolean; by: string; byPi: boolean; at: number };
+    /** The tool call that made it, `taskId:callId`: the call run again finds it instead of saving another. */
+    key?: string;
+};
+
+/**
+ * Memory: short lessons Pi keeps across sessions, by id, for one project or everywhere. Pi gets those that apply in
+ * its system prompt (`extensions/memory.ts`).
+ */
+export const MemoryDoc = defineDoc<{ items: Record<string, Lesson> }>({
+    kind: "pocket.memory",
+    version: 1,
+    scope: "session",
+    initial: () => ({ items: {} }),
+});
+
 /**
  * The page a conversation's browser last showed, and its size, to open it again after a restart. The page itself lives
  * in memory only (`browser.ts`).
@@ -377,5 +419,189 @@ export const ShellRequestsDoc = defineDoc<{ items: Record<string, number> }>({
     scope: "conversation",
     history: "latest",
     fork: "initial",
+    initial: () => ({ items: {} }),
+});
+
+/**
+ * PiP's follows (`pip.ts`), by the key of the tool call that made each, so a call run again finds the follow it made.
+ * `doneAt` marks one that reported (or was stopped); it stays a day, then goes.
+ */
+export const FollowsDoc = defineDoc<{
+    items: Record<string, { taskId: number; session: number; at: number; doneAt?: number }>;
+}>({
+    kind: "pocket.pip-follows",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({ items: {} }),
+});
+
+/**
+ * PiP's compactions whose summary PiP wrote itself (`pip-compact.ts`), by task id: their cost is in `pi.usage`, added
+ * once. The newest few are kept.
+ */
+export const PipCompactionDoc = defineDoc<{ counted: number[] }>({
+    kind: "pocket.pip-compaction",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({ counted: [] }),
+});
+
+/** Whether a PR watch still looks (`watching`), or why it stopped. */
+export type WatchStatus = "watching" | "merged" | "closed" | "gave-up" | "failed" | "expired";
+
+/** A session's watch of its pull request (`watches.ts`). */
+export type PrWatch = {
+    /** `owner/name`, or `host/owner/name` for GitHub Enterprise. */
+    repo: string;
+    number: number;
+    url: string;
+    title: string;
+    branch: string;
+    /** The PR is in another repository than the session's folder: Pi is told to work in a checkout of it. */
+    elsewhere?: boolean;
+    /**
+     * `gh`'s account could not push to the PR's repository when the watch began, so GitHub does not tell it who can
+     * write there: members' and collaborators' remarks do not count, only the owner's (and bots' reviews).
+     */
+    unchecked?: boolean;
+    /** Whose work it is: messages go to Pi for them, and their checks and spend limit apply. */
+    by: string;
+    /** Pi set it up, for `by`. */
+    byPi?: boolean;
+    createdAt: number;
+    /** The durable task that looks. */
+    taskId: TaskId;
+    status: WatchStatus;
+    /** When it looks next. */
+    next: number;
+    /** Messages sent to Pi, and the most it sends. */
+    sent: number;
+    max: number;
+    /** Comments older than this were there before the watch: ISO time, as GitHub gives it. */
+    since: string;
+    /** Comments, reviews, and review comments told already, by id. */
+    seen: string[];
+    /** The commit whose failed checks Pi was told about, and the one whose conflicts. */
+    failedSha?: string;
+    conflictSha?: string;
+    /** What the last look found, for the bar: the checks of the PR's last commit. */
+    checks?: "pending" | "passed" | "failed" | "none";
+    lastAt?: number;
+    /** When it last found something to tell: two weeks with nothing and it stops. */
+    lastNewsAt: number;
+    /** Looks or sends in a row that failed, and why the last did: it stops after a while of them. */
+    errors: number;
+    note?: string;
+    /** The tool call that set it up, so a replayed call finds it. */
+    key?: string;
+};
+
+/** A session's PR watch. A fork starts without it: the PR is the session's. */
+export const WatchDoc = defineDoc<{ watch?: PrWatch }>({
+    kind: "pocket.pr-watch",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "initial",
+    initial: () => ({}),
+});
+
+/** A webhook (`hooks.ts`): an address that turns each post to it into a message to a session's Pi, or to PiP. */
+export type Hook = {
+    /** In its address, with the secret. */
+    id: string;
+    secret: string;
+    name: string;
+    /** What Pi should do with each post: the message's first part. */
+    instructions: string;
+    /** The session (or PiP) it messages. */
+    target: number;
+    /**
+     * For GitHub: a post gets in only with GitHub's signature made with the secret, which is not in the address, so
+     * whoever sees the address (a repository's admins do) cannot post as the hook. Absent: the secret is in the address.
+     */
+    signed?: boolean;
+    /**
+     * For GitHub: posts about what people outside the repository wrote (not its owner, nor members or collaborators who
+     * can write to it) reach Pi too. Absent: they are dropped. Only a person sets it, in the hooks sheet.
+     */
+    anyone?: boolean;
+    /** Who made it: posts go as their work, with their checks and spend limit. */
+    by: string;
+    createdAt: number;
+    /** Posts that became messages, and when the last did. */
+    count: number;
+    lastAt?: number;
+};
+
+/** Every webhook, by id. */
+export const HooksDoc = defineDoc<{ items: Record<string, Hook> }>({
+    kind: "pocket.hooks",
+    version: 1,
+    scope: "session",
+    initial: () => ({ items: {} }),
+});
+
+/** What a repository watch looks for (`repo-watches.ts`). */
+export type RepoEvent = "issues" | "pulls" | "ci" | "releases" | "mentions";
+
+/**
+ * A watch of a GitHub repository `gh`'s account can push to: what happens there (new issues and PRs, CI failing on a
+ * branch, releases, @pi mentions) goes, with its person's standing instructions, to PiP or a session.
+ */
+export type RepoWatch = {
+    /** Short and stable: what PiP and people use to remove it. */
+    id: string;
+    /** `owner/name`, or `host/owner/name` off github.com, as GitHub spells it. */
+    repo: string;
+    events: RepoEvent[];
+    /** What to do when something comes: the message's first part. */
+    instructions: string;
+    /** Issues and PRs with this label only. */
+    label?: string;
+    /** Issues and PRs assigned to `gh`'s account only. */
+    assigned?: boolean;
+    /** The branch whose failing CI counts; the repository's default branch. */
+    branch: string;
+    /**
+     * Issues and PRs from anyone, not only from the repository's owner, and members and collaborators who can write to
+     * it (and bots' PRs).
+     * Only a person turns it on, in the hooks sheet; PiP cannot.
+     */
+    anyone?: boolean;
+    /** The conversation it messages: its person's PiP, or a session. */
+    target: number;
+    /** Whose work it is: messages go for them, with their checks and spend limit. */
+    by: string;
+    /** PiP set it up, for `by`. */
+    byPi: boolean;
+    createdAt: number;
+    /** What happened before this (ISO, as GitHub writes times) was there before the watch. */
+    since: string;
+    taskId: TaskId;
+    /** When it looks next. */
+    next: number;
+    /** What was told already, by kind and id (`i12`, `p7`, `r123`, `v9`, `c456`, `l789`). */
+    seen: string[];
+    /** Messages sent, and when the last one went. */
+    count: number;
+    lastNewsAt?: number;
+    /** When it last looked, and how many looks in a row failed, with why the last did. */
+    lastAt?: number;
+    errors: number;
+    note?: string;
+    /** The tool call that set it up, so a replayed call finds it. */
+    key?: string;
+};
+
+/** Every repository watch, by id. */
+export const RepoWatchesDoc = defineDoc<{ items: Record<string, RepoWatch> }>({
+    kind: "pocket.repo-watches",
+    version: 1,
+    scope: "session",
     initial: () => ({ items: {} }),
 });

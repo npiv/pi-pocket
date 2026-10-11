@@ -1144,6 +1144,30 @@ kbd {
     text-wrap: pretty;
 }
 
+/* What a PR watch or a webhook fenced for Pi (a check's log, a post): a block of its own, scrolling past a few lines. */
+.fenced-data {
+    margin: 0.4rem 0;
+    border: 1px solid var(--line);
+    background: var(--bg);
+}
+
+.fenced-label {
+    padding: 0.2rem 0.5rem;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.fenced-data pre {
+    margin: 0;
+    padding: 0.4rem 0.5rem;
+    max-height: 14rem;
+    overflow: auto;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .attachments,
 .files {
     display: flex;
@@ -2030,11 +2054,11 @@ pre.diff .del {
 }
 
 /* Little room for the conversation: each bar keeps one line, its words cut short, its buttons whole. */
-.dock[data-compact] > :is(.plan-bar, .goal-bar, .trust-bar) {
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) {
     flex-wrap: nowrap;
 }
 
-.dock[data-compact] > :is(.plan-bar, .goal-bar, .trust-bar) > .grow {
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) > .grow {
     flex: 1 1 0;
     min-width: 0;
     white-space: nowrap;
@@ -2042,7 +2066,7 @@ pre.diff .del {
     text-overflow: ellipsis;
 }
 
-.dock[data-compact] > :is(.plan-bar, .goal-bar, .trust-bar) > :not(.grow) {
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) > :not(.grow) {
     flex: none;
     white-space: nowrap;
 }
@@ -2447,6 +2471,51 @@ button.chip:hover {
 
 .send-button.ready:hover .icon {
     transform: translateY(-2px);
+}
+
+/* Dictation (voice.js): a quiet mic beside Send; while it listens, the accent and a ring that breathes. */
+.composer-row .composer-mic {
+    width: 32px;
+    height: 32px;
+    color: var(--muted);
+}
+
+.mic-button.listening {
+    color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.mic-button.listening::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    pointer-events: none;
+    animation: listening 1.6s var(--ease-out) infinite;
+}
+
+@keyframes listening {
+    from {
+        opacity: 0.9;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(1.35);
+    }
+}
+
+/* Still, the inset ring alone says it listens. */
+:root[data-motion="reduced"] .mic-button.listening::after {
+    display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) .mic-button.listening::after {
+        display: none;
+    }
 }
 
 /* Square buttons elsewhere: the chat's send. */
@@ -3091,6 +3160,10 @@ button.chip:hover {
     color: var(--muted);
 }
 
+.group-head:focus-visible {
+    color: var(--text);
+}
+
 .group-name {
     flex: 1;
     min-width: 0;
@@ -3180,6 +3253,12 @@ button.chip:hover {
 
 .session:hover {
     background: var(--hover);
+}
+
+/* Keep focus outlines inside list controls: scrolling and folding groups clip their edges. */
+.group-head:focus-visible,
+.session:focus-visible {
+    outline-offset: -1px;
 }
 
 /* The open session: the accent's soft fill and an accent title. */
@@ -3351,7 +3430,7 @@ button.chip:hover {
     display: none;
 }
 
-/* Archive and pin: on the row's right, shown on hover. */
+/* Archive and pin: on the row's right, shown on hover or while the row has focus. */
 .session-actions {
     position: absolute;
     top: 50%;
@@ -3412,14 +3491,18 @@ button.chip:hover {
     .session-row.one-act:hover .session-side {
         min-width: 26px;
     }
-    /* Kept apart from the rules above: a browser without :has() drops only these. */
-    .session-actions:has(:focus-visible) .session-act {
+    /* Keyboard focus in the row shows them too, not the focus a click leaves on the open session's row. Kept apart
+       from the rules above: a browser without :has() drops only these. */
+    .session-row:has(:focus-visible) .session-act {
         opacity: 1;
         transform: none;
     }
-    .session-row:has(.session-act:focus-visible) .session-side {
+    .session-row:not(.no-acts):has(:focus-visible) .session-side {
         opacity: 0;
         min-width: 56px;
+    }
+    .session-row.one-act:has(:focus-visible) .session-side {
+        min-width: 26px;
     }
     /* While Ctrl/⌘ drags a selection, rows do not show their buttons. */
     :root.selecting .session-row .session-act {
@@ -5127,11 +5210,13 @@ textarea.notes {
     line-height: 1.5;
 }
 
-/* Bars above the message box: who drives (take turns), plan mode, a goal, and project trust. The left edge says which:
-   the accent for plan mode and a goal, the warning color for a question (who drives, whether to trust). */
+/* Bars above the message box: who drives (take turns), plan mode, a goal, a PR watch, and project trust. The left edge
+   says which: the accent for plan mode, a goal, and a watch, the warning color for a question (who drives, whether to
+   trust) and for a watch that had to stop. */
 .driver-bar,
 .plan-bar,
 .goal-bar,
+.watch-bar,
 .trust-bar {
     display: flex;
     flex-wrap: wrap;
@@ -5146,8 +5231,13 @@ textarea.notes {
 }
 
 .plan-bar,
-.goal-bar {
+.goal-bar,
+.watch-bar:is(.watching, .merged, .closed) {
     border-left-color: var(--accent);
+}
+
+.watch-bar a {
+    color: inherit;
 }
 
 /* The trust question keeps its words a readable width: on a phone its answers go under them, together, to the right. */
@@ -5293,6 +5383,21 @@ textarea.notes {
     margin-top: 0.4rem;
 }
 
+.setting select {
+    width: auto;
+    flex: none;
+    min-height: 40px;
+}
+
+/* A choice under its words when the two do not fit side by side, as on a phone. */
+.setting.wrap {
+    flex-wrap: wrap;
+}
+
+.setting.wrap > .grow {
+    flex: 1 1 14rem;
+}
+
 /* A scheduled message in its sheet: what Pi gets, when, and who set it. */
 .schedule {
     display: flex;
@@ -5304,6 +5409,106 @@ textarea.notes {
 
 .schedule:last-child {
     border-bottom: 0;
+}
+
+/* A change to a lesson that waits for the owner, under the lesson it would change. */
+.lesson-proposal {
+    margin-top: 0.35rem;
+    padding-left: 0.6rem;
+    border-left: 2px solid var(--accent);
+}
+
+/* Under Pi's memory call: the lesson's state, and Approve and Discard while it waits. */
+.lesson-call {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.6rem;
+    margin-top: 0.3rem;
+}
+
+.lesson-call.waiting {
+    padding: 0.35rem 0.5rem;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    font-size: 0.82rem;
+}
+
+/* The words that wait keep a readable width: where Approve and Discard would squeeze them, they go below. */
+.lesson-call.waiting > .grow {
+    flex: 1 1 16rem;
+}
+
+/* Memory: a lesson Pi keeps, who saved it and where, and what can be done with it. */
+.lesson {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.lesson:last-child {
+    border-bottom: 0;
+}
+
+.lesson.pending {
+    border-left: 2px solid var(--warn);
+    padding-left: 0.6rem;
+}
+
+.lesson-text {
+    overflow-wrap: anywhere;
+}
+
+.lesson-source a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    overflow-wrap: anywhere;
+}
+
+.lesson-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3rem 0.6rem;
+}
+
+.lesson-source {
+    flex: 1 1 10rem;
+    min-width: 0;
+}
+
+.lesson-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.lesson-actions .button.danger {
+    border-color: var(--err);
+    color: var(--err);
+}
+
+.lesson-add {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.lesson-add .segmented {
+    flex-wrap: nowrap;
+    min-width: 0;
+}
+
+.lesson-add .segmented button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Done when: a goal met, or one Pi gave up on. */
@@ -8186,6 +8391,12 @@ textarea.notes {
     .composer.busy .plan-chip {
         display: none;
     }
+    /* While Pi works the row is full: the mic takes Send's place while there is nothing to send, and gives it back once
+       there is (staying while it listens, to stop it). */
+    .composer.busy:not(.filled):has(.composer-mic) .send-button,
+    .composer.busy.filled .composer-mic:not(.listening) {
+        display: none;
+    }
 }
 
 /* A swipe's mark: back, or the place a swipe on the conversation opens, following the finger in from its side. */
@@ -8468,16 +8679,18 @@ textarea.notes {
         min-height: 36px;
     }
     .composer-row .attach-button,
+    .composer-row .composer-mic,
     .composer-row .stop-button,
     .composer-row .send-button {
         width: 36px;
         height: 36px;
     }
     /* Kept small to fit one line on a phone; a layer past each takes a tap about 40px wide and tall. */
-    .composer-row :is(.places-button, .attach-button, .stop-button, .send-button) {
+    .composer-row :is(.places-button, .attach-button, .composer-mic, .stop-button, .send-button) {
         position: relative;
     }
-    .composer-row :is(.places-button, .attach-button, .stop-button, .send-button)::before {
+    .composer-row
+        :is(.places-button, .attach-button, .composer-mic, .stop-button, .send-button)::before {
         content: "";
         position: absolute;
         inset: -4px -2px;
@@ -9912,4 +10125,448 @@ textarea.notes {
 .board-bar-actions .button:not(.primary) {
     flex: none;
     width: 96px;
+}
+
+/* ─── PiP ──────────────────────────────────────────────────── */
+
+/*
+ * PiP's window: anchored to the bottom right corner, wherever the app is and however tall the message box grows, over
+ * the conversation and its panels and under sheets, the launcher, and notices. It never reaches up over a session's top
+ * bar (`--topbar-h`, which app.js publishes): on a short screen it is shorter instead. It pops in at 87% from its
+ * corner. On phones it is a sheet from the bottom edge, over a light scrim.
+ */
+.pip-panel {
+    --pip-top: max(
+        calc(var(--gap-out) + env(safe-area-inset-top)),
+        calc(var(--topbar-h, 0px) + 6px)
+    );
+    position: fixed;
+    right: calc(var(--gap-out) + env(safe-area-inset-right));
+    bottom: calc(var(--gap-out) + env(safe-area-inset-bottom));
+    width: min(420px, calc(100vw - 2 * var(--gap-out)));
+    height: min(
+        640px,
+        calc(100dvh - var(--pip-top) - var(--gap-out) - env(safe-area-inset-bottom))
+    );
+    z-index: 18;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: var(--border) solid transparent;
+    border-image: var(--active) 1;
+    transform-origin: bottom right;
+    animation: popin 0.32s var(--ease-out);
+}
+
+.pip-panel.leaving {
+    animation: popout var(--t-out) linear forwards;
+}
+
+.pip-head {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.45rem 0.3rem 0.4rem 0.8rem;
+    position: relative;
+    border-bottom: 1px solid var(--line);
+}
+
+.pip-head .grip {
+    display: none;
+}
+
+.pip-head h2 {
+    margin: 0 0 0 0.2rem;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.pip-status {
+    flex: 1;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* How full PiP's context is, as a session's status line shows it. */
+.pip-context {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 0.2rem;
+    font: 0.72rem var(--mono);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.pip-context .meter {
+    display: inline-flex;
+    width: 28px;
+    height: 4px;
+    background: var(--line);
+}
+
+.pip-context .meter > span {
+    background: var(--accent);
+}
+
+.pip-mark {
+    display: inline-grid;
+    color: var(--accent);
+}
+
+.pip-mark.working .icon,
+.pip-bubble.busy .icon,
+.rail-pip.lit .icon {
+    animation: pulse 1.6s ease-in-out infinite;
+}
+
+.pip-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.8rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+}
+
+.pip-you {
+    align-self: flex-end;
+    max-width: 88%;
+    padding: 0.4rem 0.7rem;
+    background: var(--card-2);
+    border-right: 2px solid var(--accent);
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    animation: rise-in var(--t-fade) var(--ease-out);
+}
+
+.pip-reply {
+    color: var(--body);
+    overflow-wrap: anywhere;
+}
+
+.pip-reply .md > :first-child {
+    margin-top: 0;
+}
+
+.pip-reply .md > :last-child {
+    margin-bottom: 0;
+}
+
+.pip-steps,
+.pip-event {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.pip-tick {
+    width: 1ch;
+    color: var(--faint);
+    text-align: center;
+}
+
+.pip-error {
+    color: var(--err);
+    font-size: 0.85rem;
+}
+
+/* A report from a session PiP follows: three lines until opened. */
+.pip-report {
+    padding: 0.2rem 0.65rem 0.45rem;
+    background: var(--card);
+    border: 1px solid var(--line);
+    color: var(--body);
+}
+
+.pip-report-head {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    min-height: 40px;
+    color: var(--accent);
+    font-size: 0.72rem;
+}
+
+.pip-report-head span {
+    flex: 1;
+    text-align: left;
+}
+
+.pip-report-fold {
+    color: var(--muted);
+    transition: transform var(--t-hover) var(--ease-out);
+}
+
+.pip-report.open .pip-report-fold {
+    transform: rotate(180deg);
+}
+
+.pip-report-text {
+    font-size: 0.85rem;
+}
+
+/* What a webhook posted: as it came, shown once the card is open. */
+.pip-report-data {
+    margin: 0.4rem 0 0;
+    padding: 0.4rem 0.5rem;
+    max-height: 16rem;
+    overflow: auto;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.pip-report:not(.open) .pip-report-data {
+    display: none;
+}
+
+.pip-report:not(.open) .pip-report-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.pip-welcome {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.pip-hello {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--text);
+}
+
+.pip-intro {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.88rem;
+}
+
+.pip-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.35rem;
+}
+
+.pip-chip {
+    min-height: 40px;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--line-strong);
+    color: var(--body);
+    font-size: 0.84rem;
+    text-align: left;
+}
+
+.pip-chip:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.pip-loading {
+    margin: auto;
+}
+
+/* A call of PiP's waits for approval, which the panel cannot give: a line that leads to where it can. */
+.pip-approval {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.5rem 0.35rem 0.85rem;
+    border-top: 1px solid var(--line);
+    color: var(--warn);
+    font-size: 0.82rem;
+}
+
+.pip-approval .button {
+    min-height: 40px;
+}
+
+.pip-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.25rem;
+    padding: 0.4rem 0.4rem 0.45rem 0.85rem;
+    border-top: 1px solid var(--line);
+}
+
+.pip-composer textarea {
+    flex: 1;
+    min-width: 0;
+    max-height: 160px;
+    padding: 0.55rem 0;
+    resize: none;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    line-height: 1.45;
+}
+
+/* iOS zooms into a text field smaller than 16px as it takes focus: PiP's box keeps the app's touch size. */
+@media (pointer: coarse) {
+    .pip-composer textarea {
+        font-size: 16px;
+    }
+}
+
+.pip-send:not(:disabled) {
+    color: var(--accent);
+}
+
+.pip-scrim {
+    display: none;
+}
+
+/* The mark in the corner, while PiP works or has something new: above the message box, out of its way. */
+.pip-bubble {
+    position: fixed;
+    right: calc(var(--gap-out) + 6px + env(safe-area-inset-right));
+    bottom: calc(104px + env(safe-area-inset-bottom));
+    z-index: 16;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    background: var(--panel);
+    color: var(--accent);
+    border: var(--border) solid transparent;
+    border-image: var(--active) 1;
+    animation: popin 0.32s var(--ease-out);
+}
+
+.pip-bubble.leaving {
+    animation: popout var(--t-out) linear forwards;
+}
+
+.pip-dot,
+.rail-news {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+}
+
+.pip-dot {
+    top: 5px;
+    right: 5px;
+}
+
+.rail-news {
+    right: 8px;
+    bottom: 8px;
+    width: 6px;
+    height: 6px;
+}
+
+.rail-pip.lit {
+    color: var(--accent);
+}
+
+.rail-pip.open {
+    color: var(--text);
+    background: var(--hover);
+}
+
+@media (max-width: 699px) {
+    .pip-panel {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 86dvh;
+        border: 0;
+        border-top: 2px solid transparent;
+        border-image: var(--active) 1;
+        padding-bottom: env(safe-area-inset-bottom);
+        animation: sheet-up var(--t-in) var(--ease-out);
+    }
+
+    .pip-panel.leaving {
+        animation: sheet-down 0.2s var(--ease-in-out) forwards;
+    }
+
+    .pip-head {
+        padding-top: 0.75rem;
+    }
+
+    .pip-head .grip {
+        display: block;
+    }
+
+    /* Above the message box and the jump to the newest message, both at the bottom right. */
+    .pip-bubble {
+        bottom: calc(176px + env(safe-area-inset-bottom));
+    }
+
+    .pip-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 17;
+        background: var(--scrim);
+        animation: fade var(--t-fade) var(--ease-almost);
+    }
+
+    .pip-scrim.leaving {
+        animation: fade-out var(--t-out) linear forwards;
+    }
+}
+
+/* A webhook in its sheet: name and where it sends, what Pi is told, its address when just made, and how it was used. */
+.hook {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem 0.7rem;
+    margin-top: 0.5rem;
+    background: var(--card);
+    border: 1px solid var(--line);
+}
+
+.hook.fresh {
+    border-color: var(--accent);
+}
+
+.hook-head,
+.hook-actions {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.hook-actions {
+    align-items: center;
+}
+
+.hook-text {
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.hook-address {
+    overflow-wrap: anywhere;
+    user-select: all;
+    color: var(--accent);
 }

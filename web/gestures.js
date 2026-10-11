@@ -45,10 +45,11 @@ function speedOf(samples) {
 
 /**
  * Drag `ref`'s element to close it: `"down"` for a sheet from the bottom edge, `"left"` for the drawer. It follows the
- * finger and dims the scrim behind it (its parent) as it goes. Let go far or fast enough, it calls `onClose` and stays
- * where the finger left it, for its closing animation to go on from there; otherwise it springs back. Only on touch.
+ * finger and dims the scrim behind it (its parent, or the `scrim` ref's element) as it goes. Let go far or fast enough,
+ * it calls `onClose` and stays where the finger left it, for its closing animation to go on from there; otherwise it
+ * springs back. Only on touch.
  */
-export function useDragToClose(ref, { dir, onClose, enabled = true }) {
+export function useDragToClose(ref, { dir, onClose, enabled = true, scrim: scrimRef }) {
     const close = useRef(onClose);
 
     close.current = onClose;
@@ -60,7 +61,8 @@ export function useDragToClose(ref, { dir, onClose, enabled = true }) {
         }
 
         const down = dir === "down";
-        const scrim = element.parentElement;
+        // PiP's sheet has a scrim beside it, not around it: dimming its parent would dim the whole app.
+        const scrim = scrimRef?.current ?? element.parentElement;
         let start = null;
         let dragging = false;
         let samples = [];
@@ -194,11 +196,13 @@ export function useDragToClose(ref, { dir, onClose, enabled = true }) {
             if (dragging) {
                 element.style.transform = "";
                 element.style.transition = "";
-                scrim.style.opacity = "";
-                scrim.style.transition = "";
             }
+
+            // The scrim may outlive the element: it never stays dimmed by a drag that closed it.
+            scrim.style.opacity = "";
+            scrim.style.transition = "";
         };
-    }, [ref.current, dir, enabled]);
+    }, [ref.current, dir, enabled, scrimRef?.current]);
 }
 
 // ─── Marks that follow a swipe ────────────────────────────────────────────────────

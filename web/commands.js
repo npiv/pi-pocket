@@ -2,7 +2,9 @@
 import { browserAvailable, openInBrowser, toggleBrowser } from "./browser.js";
 import { filesAvailable, toggleFiles } from "./files-panel.js";
 import { branchAvailable } from "./sheets/branch.js";
+import { memoryAvailable, remember } from "./sheets/memory.js";
 import { togglePeeks } from "./peeks.js";
+import { askPip, openPip, pipAvailable } from "./pip.js";
 import { actions, collab, navigate, notify, openSheet, scoped, store } from "./store.js";
 import { chooseTheme, THEMES } from "./theme.js";
 import { trustAvailable } from "./trust.js";
@@ -18,6 +20,22 @@ export const schedulesAvailable = () =>
     isSession() && store.state.server?.extensions?.includes("pocket-schedules") === true;
 const goalsAvailable = () =>
     isSession() && store.state.server?.extensions?.includes("pocket-goals") === true;
+
+/** Webhooks need the triggers extension; so does watching a PR, which is for sessions other than PiP. */
+export const triggersOn = () =>
+    store.state.server?.extensions?.includes("pocket-triggers") === true;
+export const watchAvailable = () =>
+    isSession() && !store.state.view.conversation?.pip && triggersOn();
+
+/** Watch this session's pull request (its branch's, or `pr`), and say what that means. */
+export async function watchPr(pr) {
+    const { number } = await actions.watchPr(pr);
+
+    notify(
+        "info",
+        `Watching PR #${number}: Pi hears when its checks fail, it has conflicts, or reviewers comment, until it is merged.`,
+    );
+}
 
 /** How long a list of prompt templates is used before it is fetched again: someone may be writing one. */
 const TEMPLATES_FOR_MS = 30_000;
@@ -282,6 +300,26 @@ const COMMANDS = [
         },
     },
     {
+        name: "remember",
+        args: "<lesson>",
+        description: "Keep a lesson for Pi in every session of this project",
+        available: () => memoryAvailable() && store.state.me?.role !== "viewer",
+        run: async (arg) => {
+            if (arg === "") {
+                return openSheet({ type: "memory" });
+            }
+
+            const lesson = await remember(arg);
+
+            notify(
+                "info",
+                lesson.pending
+                    ? "Remembered. Pi uses it once the owner approves it."
+                    : "Remembered. Pi gets it from its next message.",
+            );
+        },
+    },
+    {
         name: "until",
         args: "<command>",
         description: "Pi keeps going until a check passes, such as npm test (5 checks at most)",
@@ -294,6 +332,14 @@ const COMMANDS = [
             await actions.setGoal(arg);
             notify("info", `Pi keeps going until ${arg} passes, checked after each answer.`);
         },
+    },
+    {
+        name: "watch",
+        args: "[PR number or URL]",
+        description:
+            "Watch this session's pull request: Pi fixes failed checks and answers reviews until it is merged",
+        available: watchAvailable,
+        run: (arg) => watchPr(arg),
     },
     { name: "stop", description: "Stop the current run", run: () => actions.abort() },
     { name: "copy", description: "Copy Pi’s last reply", run: copyLast },
@@ -345,6 +391,13 @@ const COMMANDS = [
         description: "Switch the folder to another git branch, or make one",
         available: branchAvailable,
         run: (arg) => openSheet({ type: "branch", query: arg }),
+    },
+    {
+        name: "pip",
+        args: "[message]",
+        description: "Open PiP, your assistant over every session, or ask it something",
+        available: pipAvailable,
+        run: (arg) => (arg === "" ? openPip() : askPip(arg)),
     },
     {
         name: "peek",

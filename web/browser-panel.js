@@ -238,7 +238,7 @@ function appKey(event) {
         event.altKey &&
         !event.ctrlKey &&
         !event.metaKey &&
-        /^(Digit[1-9]|ArrowUp|ArrowDown|KeyN|KeyB)$/.test(event.code)
+        /^(Digit[1-9]|ArrowUp|ArrowDown|KeyN|KeyB|KeyA|KeyV)$/.test(event.code)
     );
 }
 

@@ -28,6 +28,7 @@ import {
     peeksWanted,
     togglePeeks,
 } from "./peeks.js";
+import { closePip, openPip, PipHost, pipAvailable, togglePip } from "./pip.js";
 import { Drawer, RailNav, ResizeHandle, SessionList, workspaceOrder } from "./sessions.js";
 // Loaded for what it does: it gives replies' Markdown the component for pages, images, and diffs in code blocks.
 import "./rich.js";
@@ -54,7 +55,8 @@ import {
 } from "./store.js";
 import { prefs, setPrefs, startTheme } from "./theme.js";
 import { Transcript } from "./transcript.js";
-import { APPLE, Boot, html, Icon, iconPath, shortPath, usePresence } from "./ui.js";
+import { APPLE, Boot, html, Icon, iconPath, shortPath, useEdge, usePresence } from "./ui.js";
+import { toggleDictation } from "./voice.js";
 
 /**
  * Back to the session list, where it is not beside the conversation: back past the sessions opened from it, as a
@@ -111,8 +113,10 @@ function Topbar() {
         (session) =>
             session.waiting && !session.archived && session.id !== store.state.conversationId,
     ).length;
+    // How far down it reaches: PiP's window on a short wide screen stops below its buttons.
+    const edge = useEdge("--topbar-h", (rect) => rect.bottom);
 
-    return html`<header class="topbar">
+    return html`<header class="topbar" ref=${edge}>
         <button
             class="icon-button badge-host topbar-back"
             aria-label=${waiting > 0 ? `Back to sessions, ${waiting} waiting for you` : "Back to sessions"}
@@ -377,6 +381,7 @@ function App() {
         <${PanelHost} key=${`files:${state.conversationId}`} shown=${filing} panel=${FilesPanel} />
         ${inConversation && html`<${PeopleHost} shown=${people} replaced=${browsing || filing} />`}
         <${Drawer} />
+        <${PipHost} />
         <${Sheets} />
         <${LauncherHost} />
         <${Notices} />
@@ -539,6 +544,40 @@ addEventListener("keydown", (event) => {
 
             return;
         }
+
+        // PiP, the assistant over every screen; not under a sheet, where it would open unseen.
+        if (event.code === "KeyA" && pipAvailable() && !store.state.sheet) {
+            event.preventDefault();
+            togglePip();
+
+            return;
+        }
+
+        // Dictation into the message box in view: PiP's while it is open, else the session's.
+        if (
+            event.code === "KeyV" &&
+            !store.state.sheet &&
+            !store.state.launcher &&
+            toggleDictation()
+        ) {
+            event.preventDefault();
+
+            return;
+        }
+    }
+
+    // Esc closes PiP first, unless a sheet or the launcher is over it: those close first.
+    if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        store.state.pipOpen &&
+        !store.state.sheet &&
+        !store.state.launcher
+    ) {
+        event.preventDefault();
+        closePip();
+
+        return;
     }
 
     if (event.key === "Escape" && !event.defaultPrevented) {
@@ -646,6 +685,17 @@ render(html`<${App} />`, root);
 if (new URLSearchParams(location.search).has("chat")) {
     replaceAddress(location.pathname);
     openSheet({ type: "chat" });
+}
+
+// PiP's notifications open its panel, over whatever was open: `/?pip=1`. Opened once the server says PiP is here.
+if (new URLSearchParams(location.search).has("pip")) {
+    replaceAddress(location.pathname);
+    const stop = store.subscribe(() => {
+        if (store.state.server) {
+            stop();
+            openPip();
+        }
+    });
 }
 
 // The worker shows notifications and receives what other apps share; it needs a secure page (https or localhost).

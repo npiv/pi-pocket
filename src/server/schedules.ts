@@ -3,7 +3,8 @@
  * its message, and for a repeat goes back to sleep until the next time. A restart while it sleeps continues the
  * sleep, and one that comes after the time sends at once. Each sending has its own request id, so a restart in the
  * middle of one never sends twice. A schedule goes out only while its person may still steer the session and no
- * spend limit is reached; otherwise it is cancelled, with a line in the chat saying why. The schedules extension
+ * spend limit is reached; otherwise it is cancelled, with a line in the chat saying why. One in PiP's conversation
+ * waits while PiP is turned off, and goes out once it is back. The schedules extension
  * (`extensions/schedules.ts`) installs the task and gives Pi a tool to schedule its own follow-ups; while it is off,
  * nothing goes out.
  */
@@ -67,6 +68,8 @@ export type ScheduleRequest = {
 
 export class Schedules {
     readonly #app: PocketApp;
+    /** How long a schedule of PiP's waits before it looks again whether PiP is back. */
+    holdMs = 60_000;
     /** The durable task behind each schedule; the schedules extension installs it. */
     readonly task: Task<ScheduleInput, ScheduleState, null, object>;
 
@@ -112,6 +115,22 @@ export class Schedules {
 
         if (schedule === undefined || conversation === undefined) {
             return runtime.commit(() => finished, context);
+        }
+
+        // PiP's conversation while PiP is off would run without PiP's rules: its schedule waits, and goes out once PiP
+        // is back. Its `runs` stays, so a sending this replaces keeps its request id.
+        if (this.#waitsForPip(conversationId)) {
+            return runtime.commit(async (tx) => {
+                const item = (await tx.doc(ScheduleDoc, conversationId)).items[id];
+
+                if (item === undefined) {
+                    return finished;
+                }
+
+                item.next = runtime.now() + this.holdMs;
+
+                return { status: "running", checkpoint: { phase: "wait" } } as const;
+            }, context);
         }
 
         // Sent as the person who set it up, so it shows as theirs. Pi's own are sent as Pi's, but as the work of whom Pi
@@ -168,6 +187,20 @@ export class Schedules {
 
             return { status: "running", checkpoint: { phase: "wait" } };
         }, context);
+    }
+
+    /** Whether a conversation is a PiP whose person cannot have it now (its extension is off). */
+    #waitsForPip(conversationId: ConversationId): boolean {
+        const app = this.#app;
+        const userId = app.sessionMeta(conversationId)?.pip;
+
+        if (userId === undefined) {
+            return false;
+        }
+
+        const person = app.config.userById(userId);
+
+        return person === undefined || !app.pip.available(person);
     }
 
     /**

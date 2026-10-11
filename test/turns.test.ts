@@ -189,6 +189,33 @@ test("a group's line says what its calls did, in the order Pi did them", () => {
     assert.equal(turns.summarize(steps([thought]), true), "Thinking");
 });
 
+test("PiP's watches read as what they did, not as the tool's name", () => {
+    const steps = (blocks: Block[]) => blocks.map((block) => ({ block }));
+
+    assert.equal(
+        turns.summarize(steps([call("1", "repo_watch", { action: "add", repo: "acme/api" })])),
+        "Set up a repository watch",
+    );
+    assert.equal(
+        turns.summarize(
+            steps([
+                call("1", "repo_watch", { action: "list" }),
+                call("2", "repo_watch", { action: "remove", id: "w1" }),
+            ]),
+        ),
+        "Checked repository watches, removed a repository watch",
+    );
+    assert.equal(
+        turns.summarize(
+            steps([
+                call("1", "session_watch_pr", { action: "start", session: 3 }),
+                call("2", "session_watch_pr", { action: "stop", session: 3 }),
+            ]),
+        ),
+        "Watched a pull request, stopped watching the PR",
+    );
+});
+
 test("test runs read as how many passed, from each runner's own count", () => {
     assert.equal(
         turns.testOutcome("ℹ tests 11\nℹ pass 11\nℹ fail 0\nℹ duration_ms 265.2", "node --test"),

@@ -184,6 +184,61 @@ export async function conversationRoutes(
         return json(response, 200, { ok: true });
     }
 
+    if (third === "watch" && method === "POST") {
+        const body = await readJson<{ pr?: unknown; stop?: unknown }>(request);
+
+        if (body.stop === true) {
+            await app.commands.unwatchPr(id, user);
+
+            return json(response, 200, { ok: true });
+        }
+
+        return json(response, 200, await app.commands.watchPr(id, user, body.pr));
+    }
+
+    // Memory: the lessons that apply here; one added by hand; one changed, forgotten, or approved.
+    if (third === "memory" && fourth === undefined) {
+        if (method === "GET") {
+            return json(response, 200, await app.memory.view(id, user));
+        }
+
+        if (method === "POST") {
+            return json(
+                response,
+                200,
+                await app.memory.remember(id, user, await readJson(request)),
+            );
+        }
+    }
+
+    if (third === "memory" && fourth !== undefined && method === "POST") {
+        const action = parts[4];
+        const change =
+            action === "remove" || action === "approve" || action === "discard"
+                ? action
+                : action === undefined
+                  ? { text: (await readJson<{ text?: unknown }>(request)).text }
+                  : undefined;
+
+        // An approval says what the person saw: it holds only if that is still what waits.
+        if (change === "approve") {
+            const seen = await readJson<{ text?: unknown; forget?: unknown }>(request);
+
+            return json(
+                response,
+                200,
+                await app.memory.edit(id, user, fourth, change, {
+                    text: typeof seen.text === "string" ? seen.text : undefined,
+                    forget: seen.forget === true,
+                }),
+            );
+        }
+
+        if (change !== undefined) {
+            return json(response, 200, await app.memory.edit(id, user, fourth, change));
+        }
+    }
+
     if (third === "goal" && method === "POST") {
         const body = await readJson<{ command?: unknown; clear?: unknown }>(request);
 

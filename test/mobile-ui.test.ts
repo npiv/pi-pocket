@@ -6,6 +6,7 @@ import {
     cleanUp,
     newSession,
     openApp,
+    owner,
     root,
     say,
     scriptedModel,
@@ -1261,5 +1262,505 @@ test(
         await until(async () => (await code()) !== null, "the invite, at the second try");
         await back();
         await reach({ sheet: null, layers: 0 }, "closed");
+    },
+);
+
+/** PiP closed and forgotten in this tab, so the tests after start without it. */
+async function noPip(): Promise<void> {
+    await page.evaluate(`
+        (await import("/pip.js")).closePip();
+        sessionStorage.removeItem("pocket.pip");
+        localStorage.removeItem("pocket.pip.draft");
+    `);
+    await until(
+        async () =>
+            (await inPage<boolean>(
+                `return JSON.stringify(document.querySelector(".pip-panel") === null)`,
+            )) === true,
+        "PiP's panel, gone",
+    );
+}
+
+test(
+    "on a desktop, Alt+A opens PiP once, for the keys typed next, below the top bar; Esc gives the focus back",
+    real,
+    async () => {
+        await fresh();
+        await page.setViewport(VIEWPORTS.desktop);
+        await tap(`.sidebar .session-row[data-id="${first}"] .session`);
+        await reach({ path: `/s/${first}` }, "the session");
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".composer textarea") !== null)`,
+                )) === true,
+            "the session's message box",
+        );
+        await page.evaluate(`
+            localStorage.removeItem("pocket.pip.draft");
+            window.pipOpens = 0;
+            const fetched = window.fetch;
+            window.fetch = (url, init) => {
+                if (String(url) === "/api/pip" && JSON.parse(init.body).on === true) {
+                    window.pipOpens++;
+                }
+
+                return fetched(url, init);
+            };
+            document.querySelector(".composer textarea").focus();
+        `);
+
+        // The words right after the shortcut, before anything had time to draw.
+        await page.input([
+            { type: "key", key: "a", modifiers: 1 },
+            { type: "text", text: "hi pip" },
+        ]);
+        const typed = () =>
+            inPage<{ pip: string | null; session: string | null; focused: string | null }>(`
+                return JSON.stringify({
+                    pip: document.querySelector(".pip-composer textarea")?.value ?? null,
+                    session: document.querySelector(".composer textarea")?.value ?? null,
+                    focused: document.activeElement?.closest(".pip-composer") ? "pip"
+                        : document.activeElement?.closest(".composer") ? "session" : null,
+                });
+            `);
+
+        assert.deepEqual(await typed(), { pip: "hi pip", session: "", focused: "pip" });
+        // Past its opening animation, where it takes its whole size.
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        // What the top bar says of its edge is where it is, once the pane has popped in.
+        assert.equal(
+            await inPage<number>(`
+                const said = parseFloat(document.documentElement.style.getPropertyValue("--topbar-h"));
+                const top = document.querySelector(".topbar").getBoundingClientRect().bottom;
+
+                return JSON.stringify(Math.round(said) - Math.round(top));
+            `),
+            0,
+            "--topbar-h matches the top bar's real edge",
+        );
+
+        // The top bar's buttons are not under PiP's window: the menu, Changes.
+        const covered = await inPage<string[]>(`
+            const buttons = [...document.querySelectorAll(".topbar button")];
+
+            return JSON.stringify(
+                buttons
+                    .filter((button) => {
+                        const box = button.getBoundingClientRect();
+                        const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+
+                        return box.width > 0 && at?.closest(".pip-panel") !== null;
+                    })
+                    .map((button) => button.getAttribute("aria-label") ?? button.className),
+            );
+        `);
+
+        assert.ok(
+            await inPage<boolean>(
+                `return JSON.stringify(document.querySelector('.topbar [aria-label="Menu"]') !== null && document.querySelector(".topbar .changes-button") !== null)`,
+            ),
+            "the top bar shows the menu and Changes",
+        );
+        assert.deepEqual(covered, [], "no top bar button is under PiP's window");
+        assert.equal(await inPage<number>(`return JSON.stringify(window.pipOpens)`), 1);
+
+        await page.press("Escape");
+        await until(
+            async () => (await typed()).focused === "session",
+            "the focus back in the session's box",
+        );
+        await noPip();
+    },
+);
+
+/** Where PiP's window is: its gaps to the screen's bottom and right edges, its top, and the top bar's bottom. */
+type Place = {
+    bottom: number;
+    right: number;
+    left: number;
+    top: number;
+    width: number;
+    screen: number;
+    topbar: number;
+};
+
+async function pipPlace(): Promise<Place> {
+    await until(
+        async () =>
+            (await inPage<boolean>(
+                `return JSON.stringify(document.querySelector(".pip-panel:not(.leaving)") !== null)`,
+            )) === true,
+        "PiP's window",
+    );
+    // Past its opening animation, where it takes its whole size.
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    return inPage<Place>(`
+        const box = document.querySelector(".pip-panel").getBoundingClientRect();
+
+        return JSON.stringify({
+            bottom: Math.round(innerHeight - box.bottom),
+            right: Math.round(innerWidth - box.right),
+            left: Math.round(box.left),
+            top: Math.round(box.top),
+            width: Math.round(box.width),
+            screen: innerWidth,
+            topbar: Math.round(document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0),
+        });
+    `);
+}
+
+/** The session's message box holding `text`, as typing leaves it. */
+const typeInBox = (text: string) =>
+    page.evaluate(`
+        const box = document.querySelector(".composer textarea");
+
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(box, ${JSON.stringify(text)});
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+    `);
+
+test(
+    "PiP's window stays in the bottom right corner at every size, however tall the message box grows; on a phone it is a sheet on the bottom edge",
+    real,
+    async () => {
+        await fresh();
+        await tap(row(first));
+        await reach({ path: `/s/${first}` }, "the session");
+
+        for (const [width, height] of [
+            [1280, 800],
+            [1920, 1080],
+            [1024, 700],
+            [844, 390],
+        ] as const) {
+            const size = `${width}x${height}`;
+
+            await page.setViewport({ width, height, scale: 1, mobile: false });
+            await until(
+                async () =>
+                    (await inPage<boolean>(
+                        `return JSON.stringify(document.querySelector(".composer textarea") !== null)`,
+                    )) === true,
+                "the session's message box",
+            );
+            await page.evaluate(`(await import("/pip.js")).openPip()`);
+            const place = await pipPlace();
+
+            // Anchored: the same small gap to the bottom and the right edge, whatever the session shows.
+            assert.equal(
+                place.bottom,
+                place.right,
+                `${size}: as far from the bottom as from the right`,
+            );
+            assert.ok(
+                place.bottom >= 0 && place.bottom <= 24,
+                `${size}: on the bottom edge (${place.bottom}px up)`,
+            );
+            assert.ok(place.top >= place.topbar, `${size}: below the top bar`);
+            // A message box that grows does not move it.
+            await typeInBox("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight");
+            assert.deepEqual(
+                await pipPlace(),
+                place,
+                `${size}: where it was with a tall message box`,
+            );
+            await typeInBox("");
+            await noPip();
+        }
+
+        // Over the session list too: the same corner.
+        await page.setViewport(VIEWPORTS.desktop);
+        await page.navigate(`${base}/`);
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(${JSON.stringify(row(first))}) !== null)`,
+                )) === true,
+            "the session list",
+        );
+        await page.evaluate(`(await import("/pip.js")).openPip()`);
+        const home = await pipPlace();
+
+        assert.equal(
+            home.bottom,
+            home.right,
+            "the session list: as far from the bottom as from the right",
+        );
+        assert.ok(home.bottom <= 24, "the session list: on the bottom edge");
+        await noPip();
+
+        // On a phone: a sheet across the whole width, on the bottom edge.
+        await fresh();
+        await tap(row(first));
+        await reach({ path: `/s/${first}` }, "the session");
+        await page.evaluate(`(await import("/pip.js")).openPip()`);
+        const phone = await pipPlace();
+
+        assert.deepEqual(
+            { bottom: phone.bottom, left: phone.left, width: phone.width },
+            { bottom: 0, left: 0, width: phone.screen },
+            "a phone's sheet",
+        );
+        await noPip();
+    },
+);
+
+test(
+    "PiP's header fits Compact, Start fresh, and how full its context is at every size; Compact summarizes it",
+    real,
+    async () => {
+        const pip = await app.pip.ensure(owner(app));
+
+        await app.commands.configure(pip, owner(app), {
+            model: { provider: "faux", modelId: "faux-1" },
+            thinkingLevel: "off",
+        });
+        await say(app, pip, "hello pip");
+        await say(app, pip, "and again");
+
+        for (const viewport of [VIEWPORTS.desktop, VIEWPORTS.mobile, VIEWPORTS.tablet]) {
+            await fresh();
+            await page.setViewport(viewport);
+            await page.evaluate(`(await import("/pip.js")).openPip()`);
+            await until(
+                async () =>
+                    (await inPage<boolean>(
+                        `return JSON.stringify(document.querySelector(".pip-head .pip-context") !== null)`,
+                    )) === true,
+                "how full PiP's context is",
+                20_000,
+            );
+            // Past its opening animation, where it takes its whole size.
+            await new Promise((resolve) => setTimeout(resolve, 450));
+            const head = await inPage<{
+                fits: boolean;
+                buttons: { label: string; width: number; height: number; inside: boolean }[];
+                context: string;
+                meter: boolean;
+                overlaps: boolean;
+            }>(`
+                const head = document.querySelector(".pip-head");
+                const box = head.getBoundingClientRect();
+                const parts = [...head.querySelectorAll(".pip-context, .icon-button")].map((each) =>
+                    each.getBoundingClientRect(),
+                );
+
+                return JSON.stringify({
+                    fits: head.scrollWidth <= head.clientWidth,
+                    buttons: [...head.querySelectorAll(".icon-button")].map((button) => {
+                        const rect = button.getBoundingClientRect();
+
+                        return {
+                            label: button.getAttribute("aria-label"),
+                            width: rect.width,
+                            height: rect.height,
+                            inside: rect.left >= box.left && rect.right <= box.right,
+                        };
+                    }),
+                    context: head.querySelector(".pip-context").textContent.replace(/\\s+/g, ""),
+                    meter: head.querySelector(".pip-context .meter > span") !== null,
+                    overlaps: parts.some((one, index) =>
+                        parts.slice(index + 1).some((two) => one.right > two.left + 0.5 && two.right > one.left + 0.5),
+                    ),
+                });
+            `);
+            const size = `${viewport.width}x${viewport.height}`;
+
+            assert.equal(head.fits, true, `${size}: nothing runs past the header`);
+            assert.equal(head.overlaps, false, `${size}: nothing over anything else`);
+            assert.deepEqual(
+                head.buttons.map((button) => button.label),
+                ["Compact", "Start fresh", "Open as a conversation", "Close PiP"],
+            );
+
+            for (const button of head.buttons) {
+                assert.ok(
+                    button.width >= 40 && button.height >= 40 && button.inside,
+                    `${size}: ${button.label} is a whole 40px target (${JSON.stringify(button)})`,
+                );
+            }
+
+            assert.match(head.context, /^\d+%$/, `${size}: how full, as a share`);
+            assert.ok(head.meter);
+            await noPip();
+        }
+
+        // Compact, by hand: compaction keeps only the newest few messages as they are, so these two have one to summarize.
+        const settings = app.settings.getCompactionSettings;
+
+        app.settings.getCompactionSettings = () => ({
+            enabled: true,
+            reserveTokens: 16_384,
+            keepRecentTokens: 10,
+        });
+
+        try {
+            await fresh();
+            await page.setViewport(VIEWPORTS.desktop);
+            await page.evaluate(`(await import("/pip.js")).openPip()`);
+            await tap('.pip-head [aria-label="Compact"]:not([disabled])');
+            await until(
+                async () =>
+                    (await inPage<boolean>(`
+                        return JSON.stringify([...document.querySelectorAll(".pip-body .pip-event")].some(
+                            (event) => event.textContent.includes("Earlier messages summarized"),
+                        ));
+                    `)) === true,
+                "the summary, in the panel",
+            );
+            await until(
+                async () =>
+                    (await inPage<boolean>(`
+                        const { store } = await import("/store.js");
+
+                        return JSON.stringify(store.state.notices.some((notice) => notice.message === "PiP's context compacted."));
+                    `)) === true,
+                "the notice that it is done",
+            );
+            // Estimated now, until PiP's next answer measures it.
+            assert.match(
+                await inPage<string>(
+                    `return JSON.stringify(document.querySelector(".pip-head .pip-context").textContent.replace(/\\s+/g, ""))`,
+                ),
+                /^~\d+%$/,
+            );
+            await noPip();
+        } finally {
+            app.settings.getCompactionSettings = settings;
+        }
+    },
+);
+
+test(
+    "on a phone, PiP dragged down closes, and the app behind it is not left dimmed",
+    real,
+    async () => {
+        await fresh();
+        await tap(row(first));
+        await reach({ path: `/s/${first}` }, "the session");
+        await page.evaluate(`(await import("/pip.js")).openPip()`);
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".pip-panel:not(.leaving)") !== null)`,
+                )) === true,
+            "PiP's sheet",
+        );
+        // Past its opening animation.
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        await page.evaluate(`
+        const head = document.querySelector(".pip-head");
+        const panel = document.querySelector(".pip-panel");
+        const from = head.getBoundingClientRect().top + 10;
+        const to = panel.offsetHeight * 0.6;
+        const touch = (y) => new Touch({ identifier: 1, target: head, clientX: 200, clientY: y });
+        const fire = (type, y) =>
+            head.dispatchEvent(
+                new TouchEvent(type, {
+                    bubbles: true,
+                    cancelable: true,
+                    touches: type === "touchend" ? [] : [touch(y)],
+                    changedTouches: [touch(y)],
+                }),
+            );
+
+        fire("touchstart", from);
+
+        for (let step = 1; step <= 10; step++) {
+            fire("touchmove", from + (to * step) / 10);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+
+        fire("touchend", from + to);
+    `);
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".pip-panel") === null)`,
+                )) === true,
+            "PiP closed by the drag",
+        );
+        assert.deepEqual(
+            await inPage<{ inline: string; shown: string }>(`
+            const layout = document.querySelector(".layout");
+
+            return JSON.stringify({ inline: layout.style.opacity, shown: getComputedStyle(layout).opacity });
+        `),
+            { inline: "", shown: "1" },
+        );
+        await noPip();
+    },
+);
+
+test(
+    "PiP's panel says when a call of PiP's waits for approval, and leads to it",
+    real,
+    async () => {
+        await fresh();
+        await page.setViewport(VIEWPORTS.desktop);
+        await page.evaluate(`(await import("/pip.js")).openPip()`);
+        await until(
+            async () =>
+                (await inPage<boolean>(
+                    `return JSON.stringify(document.querySelector(".pip-panel .pip-loading") === null)`,
+                )) === true,
+            "PiP, awake",
+            20_000,
+        );
+        // As the server sends it while the guard holds one of PiP's calls.
+        const pip = await inPage<number>(`
+        const { store } = await import("/store.js");
+
+        store.set((state) => ({
+            pipView: { ...state.pipView, approvals: [{ id: "a1", tool: "session_start", subject: "", reason: "" }] },
+        }));
+
+        return JSON.stringify(store.state.pip.id);
+    `);
+
+        await until(
+            async () =>
+                (
+                    await inPage<string | null>(
+                        `return JSON.stringify(document.querySelector(".pip-approval")?.textContent ?? null)`,
+                    )
+                )?.includes("waits for your approval: session_start") === true,
+            "the line about the approval",
+        );
+        assert.equal(
+            await inPage<string>(
+                `return JSON.stringify(document.querySelector(".pip-status").textContent.trim())`,
+            ),
+            "needs you",
+        );
+        await tap(".pip-approval .button");
+        await reach({ path: `/s/${pip}` }, "PiP's conversation, where the call can be allowed");
+        await noPip();
+    },
+);
+
+test(
+    "/pip with words that cannot be sent leaves them in PiP's box, after its draft",
+    real,
+    async () => {
+        await fresh();
+        await page.setViewport(VIEWPORTS.desktop);
+        await page.evaluate(`
+        localStorage.setItem("pocket.pip.draft", "a draft");
+        const fetched = window.fetch;
+        window.fetch = (url, init) =>
+            String(url).endsWith("/submit") ? Promise.reject(new TypeError("offline")) : fetched(url, init);
+        (await import("/pip.js")).askPip("hello pip");
+    `);
+        await until(
+            async () =>
+                (await inPage<string | null>(
+                    `return JSON.stringify(document.querySelector(".pip-composer textarea")?.value ?? null)`,
+                )) === "a draft\n\nhello pip",
+            "the words, back in PiP's box after the draft",
+        );
+        await noPip();
     },
 );

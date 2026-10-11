@@ -7,10 +7,12 @@ import {
     closeSheet,
     navigate,
     notify,
+    openSheet,
     scoped,
     store,
 } from "../store.js";
 import { copyText, html, Icon, item, modelLabel, replyText, Sheet, writtenText } from "../ui.js";
+import { memoryAvailable } from "./memory.js";
 
 /** The message to Pi a reply answers: the newest one before it. */
 function promptBefore(entryId) {
@@ -25,6 +27,13 @@ function promptBefore(entryId) {
     }
 
     return undefined;
+}
+
+/** A message as the start of a lesson: one line, cut to a lesson's length. */
+function lessonFrom(text) {
+    const flat = text.replace(/\s+/g, " ").trim();
+
+    return flat.length > 300 ? `${flat.slice(0, 299)}…` : flat;
 }
 
 /** A fork or a send again on its way: a second tap waits for it. */
@@ -153,6 +162,15 @@ export function MessageSheet({ entryId }) {
         ${canBranch && !toPi && item("Fork from here", () => openBranch(() => actions.fork(entry.id, { worktree })), "everything up to this reply")}
         ${canBranch && toPi && item("Edit and send again…", () => setDraft(text))}
         ${canBranch && prompt && html`<${SendAgain} prompt=${prompt} worktree=${worktree} />`}
+        ${
+            memoryAvailable() &&
+            canSteer() &&
+            item(
+                "Remember…",
+                () => openSheet({ type: "memory", draft: lessonFrom(text) }),
+                "keep it as a lesson for Pi",
+            )
+        }
         ${item("Copy text", copy)}
     <//>`;
 }

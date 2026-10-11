@@ -226,6 +226,83 @@ export function createApi(options: HttpOptions, auth: Auth) {
             return json(response, 200, app.subagents(user));
         }
 
+        // The PiP panel opened or closed in a tab: while open, it gets PiP's conversation (`pipview` events). Opening it
+        // the first time makes this person's PiP; the answer says which conversation it is.
+        if (first === "pip" && second === undefined && method === "POST") {
+            const body = await readJson<{ connection?: unknown; on?: unknown; seq?: unknown }>(
+                request,
+            );
+
+            if (body.seq !== undefined && !Number.isSafeInteger(body.seq)) {
+                throw new HttpError(400, "seq must be a whole number");
+            }
+
+            await app.setPip(
+                user,
+                String(body.connection ?? ""),
+                body.on === true,
+                body.seq as number | undefined,
+            );
+
+            return json(response, 200, { pip: app.pip.state(user) });
+        }
+
+        // Webhooks: the ones this person may manage, with the address to give other services; making and removing one.
+        if (first === "hooks" && second === undefined && method === "GET") {
+            return json(response, 200, await app.commands.hooks(user));
+        }
+
+        if (first === "hooks" && second === undefined && method === "POST") {
+            return json(response, 200, await app.commands.addHook(user, await readJson(request)));
+        }
+
+        // A repository watch removed, by its person or the owner.
+        if (
+            first === "repo-watches" &&
+            second !== undefined &&
+            third === "remove" &&
+            method === "POST"
+        ) {
+            await app.repoWatches.remove(user, second);
+
+            return json(response, 200, { ok: true });
+        }
+
+        // A repository watch let hear from anyone, or only from the repository's people: by its person or the owner,
+        // never by PiP.
+        if (
+            first === "repo-watches" &&
+            second !== undefined &&
+            third === "anyone" &&
+            method === "POST"
+        ) {
+            const body = await readJson<{ anyone?: unknown }>(request);
+
+            if (typeof body.anyone !== "boolean") {
+                throw new HttpError(400, "anyone must be true or false");
+            }
+
+            await app.repoWatches.setAnyone(user, second, body.anyone);
+
+            return json(response, 200, { ok: true });
+        }
+
+        // A new secret, for a hook whose address or secret got out.
+        if (first === "hooks" && second !== undefined && third === "rotate" && method === "POST") {
+            return json(response, 200, await app.hooks.rotate(user, second));
+        }
+
+        if (
+            first === "hooks" &&
+            second !== undefined &&
+            parts[2] === "remove" &&
+            method === "POST"
+        ) {
+            await app.commands.removeHook(user, second);
+
+            return json(response, 200, { ok: true });
+        }
+
         // The subagents board opened or closed in a tab: while open, it gets every subagent (`subagents` events).
         if (first === "subagents" && method === "POST") {
             const body = await readJson<{ connection?: unknown; on?: unknown; seq?: unknown }>(
@@ -433,13 +510,23 @@ export function createApi(options: HttpOptions, auth: Auth) {
         }
 
         if (first === "settings" && method === "POST") {
-            const body = await readJson<{ approvalRule?: unknown; defaultModel?: unknown }>(
-                request,
-            );
+            const body = await readJson<{
+                approvalRule?: unknown;
+                defaultModel?: unknown;
+                pipCompactAt?: unknown;
+            }>(request);
 
             // One at a time: a second that fails must not leave the first changed.
-            if (body.approvalRule !== undefined && body.defaultModel !== undefined) {
+            if (
+                [body.approvalRule, body.defaultModel, body.pipCompactAt].filter(
+                    (value) => value !== undefined,
+                ).length > 1
+            ) {
                 throw new HttpError(400, "Change one setting at a time.");
+            }
+
+            if (body.pipCompactAt !== undefined) {
+                await app.setPipCompactAt(user, body.pipCompactAt);
             }
 
             if (body.approvalRule !== undefined) {

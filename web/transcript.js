@@ -48,10 +48,12 @@ import {
     Markdown,
     openFile,
     plainText,
+    readable,
     replyText,
     Spinner,
     Thumb,
 } from "./ui.js";
+import { LessonCall, memoryAvailable } from "./sheets/memory.js";
 
 const REPORT = /^\[subagent (\S+) (answered|failed)([^\]]*)\]\s?([\s\S]*)$/;
 /** Where the next report starts, in a message of several that arrived together (`extensions/subagents.ts`). */
@@ -59,6 +61,42 @@ const NEXT_REPORT = /\n\n(?=\[subagent \S+ (?:answered|failed))/;
 
 /** How a scheduled message starts (see src/server/schedules.ts). */
 const SCHEDULED = "[scheduled] ";
+
+/** A message the app sent for a person, and what sent it: PiP, a PR watch, a webhook (`submit` in src/server/commands.ts). */
+const VIA = /^\[via ([^\]\n]{1,300})\] /;
+/** What came from outside in such a message, fenced as data for Pi: a check's log, a webhook's post, GitHub's events. */
+const FENCED =
+    /<(ci-log|webhook-payload|github-event)((?: [a-z]+="[^"\n]*")*)>\n([\s\S]*?)\n<\/\1>/g;
+const FENCE_LABELS = { "webhook-payload": "What was posted", "github-event": "On GitHub" };
+
+/** A message from the app with what it fenced for Pi shown as blocks of its own, named after what each is. */
+function FencedText({ text }) {
+    const parts = [];
+    let last = 0;
+
+    for (const match of text.matchAll(FENCED)) {
+        const name = /"([^"]*)"/.exec(match[2])?.[1];
+        const label =
+            match[1] === "ci-log"
+                ? `Log of ${name ?? "a check"}`
+                : match[1] === "github-event"
+                  ? `On GitHub${name ? `: ${name}` : ""}`
+                  : (name ?? FENCE_LABELS[match[1]]);
+
+        parts.push(
+            html`<${MentionedText} text=${text.slice(last, match.index).replace(/\n$/, "")} />`,
+        );
+        parts.push(html`<div class="fenced-data">
+            <div class="fenced-label">${label}</div>
+            <pre>${readable(match[3])}</pre>
+        </div>`);
+        last = match.index + match[0].length;
+    }
+
+    parts.push(html`<${MentionedText} text=${text.slice(last).replace(/^\n\n?/, "")} />`);
+
+    return parts;
+}
 
 /** A goal's check that did not pass, as Pi is told about it (see src/server/extensions/goals.ts): what, then its output. */
 const GOAL_CHECK =
@@ -258,8 +296,11 @@ function UserEntry({ entry, view, users }) {
         (view.conversation?.kind === "subagent" ? "Main agent" : undefined);
     const [written, attachments] = entry.text.split(ATTACHMENTS_HEADING);
     // Set up earlier to go out now: by a person (who shows as its author) or by Pi.
-    const scheduled = written.startsWith(SCHEDULED);
-    const body = scheduled ? written.slice(SCHEDULED.length) : written;
+    // Only a message nobody typed: someone writing "[via …]" themselves gets no label.
+    const via = authorId === undefined ? VIA.exec(written) : null;
+    const sent = via ? written.slice(via[0].length) : written;
+    const scheduled = sent.startsWith(SCHEDULED);
+    const body = scheduled ? sent.slice(SCHEDULED.length) : sent;
     const files = attachments ? parseAttachments(attachments) : [];
     // `/skill:name request`: the skill by name, and the request.
     const skill = SKILL.exec(body);
@@ -283,7 +324,7 @@ function UserEntry({ entry, view, users }) {
         >
             <span class="prompt-mark" style=${`color:${mark}`} aria-hidden="true">›</span>
             ${
-                (name || entry.at || scheduled) &&
+                (name || entry.at || scheduled || via) &&
                 html`<span class="prompt-head">
                     ${
                         name &&
@@ -296,6 +337,7 @@ function UserEntry({ entry, view, users }) {
                     }
                     ${entry.at && html`<span>${clock(entry.at)}</span>`}
                     ${scheduled && html`<span>· scheduled</span>`}
+                    ${via && html`<span>· via ${via[1]}</span>`}
                 </span>`
             }
             <div class="prompt-body">
@@ -312,7 +354,11 @@ function UserEntry({ entry, view, users }) {
                 ${
                     (skill ? skill[3] : body) &&
                     html`<div class="user-text">
-                        <${MentionedText} text=${skill ? skill[3] : body} />
+                        ${
+                            via
+                                ? html`<${FencedText} text=${body} />`
+                                : html`<${MentionedText} text=${skill ? skill[3] : body} />`
+                        }
                     </div>`
                 }
                 ${
@@ -374,6 +420,14 @@ function Collapsible({ text, limit = 600 }) {
 /** The mark a call's line starts with; the rest take theirs from `describeCall`. */
 const GLYPHS = { read: "→", edit: "✎", write: "+", bash: "$", grep: "⌕", find: "⌕", subagent: "⑂" };
 
+/** What Pi did with its memory tool, as a step's label. */
+const MEMORY_WORDS = {
+    add: "saved a lesson",
+    update: "changed a lesson",
+    remove: "forgot a lesson",
+    list: "read its lessons",
+};
+
 /** A call's line: its label (the tool, or a subagent's name) and what it acts on. */
 function stepWords(call) {
     const args = call.args ?? {};
@@ -395,6 +449,13 @@ function stepWords(call) {
                 label: "browser",
                 subject: `${args.action ?? ""} ${describeCall(call).subject}`.trim(),
             };
+        case "memory":
+            return {
+                label: MEMORY_WORDS[args.action] ?? "memory",
+                subject: args.text ? short(args.text) : (args.id ?? ""),
+            };
+        case "watch_pr":
+            return { label: "watch PR", subject: [args.action, args.pr].filter(Boolean).join(" ") };
         default:
             return { label: call.name, subject: describeCall(call).subject };
     }
@@ -590,7 +651,17 @@ function ThoughtStep({ block, streaming }) {
 }
 
 /** One tool call on the timeline: what it did and how it went, and tapped, its input and output. */
-function ToolStep({ call, result, slot, approval, entryId, streaming, canRun, busy }) {
+function ToolStep({
+    call,
+    result,
+    slot,
+    approval,
+    entryId,
+    streaming,
+    canRun,
+    busy,
+    conversationId,
+}) {
     const [open, setOpen] = useState(false);
     const [full, setFull] = useState(null);
     const view = store.state.view;
@@ -788,7 +859,14 @@ function ToolStep({ call, result, slot, approval, entryId, streaming, canRun, bu
     });
     const watch = call.name === "browser" && browserAvailable() && !store.state.browserOpen;
     // What a call made shows under its line, as on today's cards: what it returned as images, an artifact, the browser.
-    const extras = result?.images > 0 || artifact || watch;
+    // A lesson Pi saved, changed, or forgot: its state, and approving it where it happened.
+    const lesson =
+        call.name === "memory" &&
+        typeof details?.lesson === "string" &&
+        memoryAvailable(conversationId)
+            ? details.lesson
+            : null;
+    const extras = result?.images > 0 || artifact || watch || lesson;
 
     return html`<div
         class=${`step ${open ? "open" : ""} ${settled ? "settled" : ""}`}
@@ -828,6 +906,10 @@ function ToolStep({ call, result, slot, approval, entryId, streaming, canRun, bu
         ${
             extras &&
             html`<div class="step-extras">
+                ${
+                    lesson &&
+                    html`<${LessonCall} lessonId=${lesson} conversationId=${conversationId} />`
+                }
                 ${
                     result?.images > 0 &&
                     html`<${EntryImages}
@@ -1068,6 +1150,7 @@ function ActivityGroup({ item, live, newest, busy, results, slots, approvals, co
                             streaming=${entry === undefined}
                             canRun=${canRun}
                             busy=${busy}
+                            conversationId=${conversationId}
                         />
                     <//>`;
                 })}

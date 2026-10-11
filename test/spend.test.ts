@@ -278,3 +278,14 @@ test("a run that crosses its session's limit is stopped once, and the people the
         app.detach(tab.client);
     }
 });
+
+test("PiP's row in Spend shows its limit, so the owner can see and clear it", async () => {
+    const pip = await app.pip.ensure(owner(app));
+    const row = () =>
+        app.spend.summary(owner(app)).sessions.find((each) => each.id === Number(pip));
+
+    await app.spend.setSessionBudget(owner(app), pip, 5);
+    await until(() => row()?.budget === 5, "PiP's limit in its row");
+    await app.spend.setSessionBudget(owner(app), pip, null);
+    await until(() => row() !== undefined && !("budget" in row()!), "no limit in its row");
+});

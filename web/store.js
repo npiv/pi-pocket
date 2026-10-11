@@ -46,6 +46,7 @@ const emptyView = () => ({
     plan: { on: false },
     schedules: [],
     goal: null,
+    watch: null,
     branch: null,
     subagentsHeld: null,
 });
@@ -108,6 +109,12 @@ export const store = {
         peopleOpen: sessionStorage.getItem("pocket.people") === "1",
         /** The last request to show the People panel: which tab and chat message, and a count that tells requests apart. */
         peopleAsk: { tab: null, highlight: null, n: 0 },
+        /** This person's PiP, as the server last told (`{ id, busy, endedAt }`); null when they have none yet. */
+        pip: null,
+        /** The PiP panel shows; kept per tab, like the browser's, so the reload after a live edit keeps it. */
+        pipOpen: sessionStorage.getItem("pocket.pip") === "1",
+        /** PiP's conversation, while the panel shows. */
+        pipView: emptyView(),
     },
     listeners: new Set(),
     set(patch) {
@@ -322,63 +329,67 @@ export async function attempt(action) {
 let source;
 
 function applyView(data) {
-    store.set((state) => {
-        const base =
-            data.full || state.view.conversation?.id !== data.conversation.id
-                ? emptyView()
-                : state.view;
-        const entries = new Map(base.entries);
+    store.set((state) => ({ view: mergeView(state.view, data), missing: null }));
+}
 
-        for (const entry of data.entries) {
-            entries.set(entry.id, entry);
-        }
+/** PiP's conversation, for its panel (`pip.js`): the same view, from a view of its own beside the session's. */
+function applyPipView(data) {
+    store.set((state) => ({ pipView: mergeView(state.pipView, data) }));
+}
 
-        const order = data.order ?? base.order;
+/** A view after an update from the server: the full view, or what changed since the last one. */
+function mergeView(current, data) {
+    const base =
+        data.full || current.conversation?.id !== data.conversation.id ? emptyView() : current;
+    const entries = new Map(base.entries);
 
-        if (data.order) {
-            const keep = new Set(data.order);
+    for (const entry of data.entries) {
+        entries.set(entry.id, entry);
+    }
 
-            for (const id of entries.keys()) {
-                if (!keep.has(id)) {
-                    entries.delete(id);
-                }
+    const order = data.order ?? base.order;
+
+    if (data.order) {
+        const keep = new Set(data.order);
+
+        for (const id of entries.keys()) {
+            if (!keep.has(id)) {
+                entries.delete(id);
             }
         }
+    }
 
-        return {
-            view: {
-                ...base,
-                conversation: data.conversation,
-                entries,
-                order,
-                live: data.live,
-                inbox: data.inbox,
-                agent: data.agent,
-                stats: data.stats,
-                clients: data.clients,
-                viewers: data.viewers,
-                approvals: data.approvals,
-                // The server sends these again only when they change: a missing one keeps its last value.
-                artifacts: data.artifacts ?? base.artifacts,
-                subagents: data.subagents ?? base.subagents,
-                authors: data.authors ?? base.authors,
-                reactions: data.reactions ?? base.reactions,
-                pins: data.pins ?? base.pins,
-                turns: data.turns ?? base.turns,
-                decisions: data.decisions ?? base.decisions,
-                plan: data.plan ?? base.plan,
-                schedules: data.schedules ?? base.schedules,
-                // No goal is null, which the server sends too: only a missing field keeps the last value.
-                goal: data.goal === undefined ? base.goal : data.goal,
-                // Why subagents' reports wait (a spend limit), or null when none do: the subagents bar says it.
-                subagentsHeld:
-                    data.subagentsHeld === undefined ? base.subagentsHeld : data.subagentsHeld,
-                // What the folder has checked out: `{ branch }` or `{ detached }`, and null outside a repository.
-                branch: data.branch === undefined ? base.branch : data.branch,
-            },
-            missing: null,
-        };
-    });
+    return {
+        ...base,
+        conversation: data.conversation,
+        entries,
+        order,
+        live: data.live,
+        inbox: data.inbox,
+        agent: data.agent,
+        stats: data.stats,
+        clients: data.clients,
+        viewers: data.viewers,
+        approvals: data.approvals,
+        // The server sends these again only when they change: a missing one keeps its last value.
+        artifacts: data.artifacts ?? base.artifacts,
+        subagents: data.subagents ?? base.subagents,
+        authors: data.authors ?? base.authors,
+        reactions: data.reactions ?? base.reactions,
+        pins: data.pins ?? base.pins,
+        turns: data.turns ?? base.turns,
+        decisions: data.decisions ?? base.decisions,
+        plan: data.plan ?? base.plan,
+        schedules: data.schedules ?? base.schedules,
+        // No goal is null, which the server sends too: only a missing field keeps the last value.
+        goal: data.goal === undefined ? base.goal : data.goal,
+        // The session's PR watch, or null: the same.
+        watch: data.watch === undefined ? base.watch : data.watch,
+        // Why subagents' reports wait (a spend limit), or null when none do: the subagents bar says it.
+        subagentsHeld: data.subagentsHeld === undefined ? base.subagentsHeld : data.subagentsHeld,
+        // What the folder has checked out: `{ branch }` or `{ detached }`, and null outside a repository.
+        branch: data.branch === undefined ? base.branch : data.branch,
+    };
 }
 
 /** The `moving` marks that a session list has not caught up with yet: it still shows those sessions where they were. */
@@ -416,6 +427,10 @@ const handlers = {
     // Every subagent in every session, while this tab shows the subagents board (`subagents-board.js`).
     subagents: (agents) => store.state.board && store.set({ boardAgents: agents }),
     view: applyView,
+    // This person's PiP: its conversation, whether it works, and when it last answered (`pip.js`); null for none.
+    pip: (pip) => store.set({ pip }),
+    // PiP's conversation, while this tab's PiP panel is open.
+    pipview: applyPipView,
     chat: applyChat,
     presence: (data) =>
         data.conversationId === store.state.conversationId && store.set({ presence: data.people }),
@@ -428,6 +443,8 @@ const handlers = {
     peek: (data) =>
         store.set((state) => ({ peeks: { ...state.peeks, [data.conversationId]: data } })),
     users: (users) => store.set({ users }),
+    // Pi's lessons changed somewhere: a Memory sheet or menu that shows them fetches them again (`sheets/memory.js`).
+    memory: () => store.set((state) => ({ memoryRev: (state.memoryRev ?? 0) + 1 })),
     missing: (data) => store.set({ missing: data.message }),
     // A notice may link to a conversation, such as a mention elsewhere: tapping it goes there.
     notice: (data) =>
@@ -846,6 +863,9 @@ export const actions = {
     setGoal: (command) => api(`c/${current()}/goal`, { command }),
     removeWorktree: (force) => api(`c/${current()}/worktree`, { remove: true, force }),
     clearGoal: () => api(`c/${current()}/goal`, { clear: true }),
+    /** Watch the session's pull request: its branch's, or `pr` (a number or address). */
+    watchPr: (pr) => api(`c/${current()}/watch`, pr ? { pr } : {}),
+    unwatchPr: () => api(`c/${current()}/watch`, { stop: true }),
     approve: (id, allow) => api(`approvals/${encodeURIComponent(id)}`, { allow }),
     /** `worktree`: the session works in a git worktree of its own, made from the folder. */
     createSession: (cwd, { worktree = false } = {}) =>

@@ -24,7 +24,7 @@ Some state lives in this process alone, and a restart forgets it. For example:
 **Its parts:**
 
 - `commands`, `collab`, `alerts`, `providers`, `schedules`, `goals`, `shell`, `spend`
-- `workspace`, `transcripts`, `attribution`, `piSessions`
+- `workspace`, `transcripts`, `attribution`, `piSessions`, `pip`, `watches`, `hooks`, `memory`
 - `browsers`
 
 **What stays on `PocketApp`** (the parts call these rather than keeping copies):
@@ -39,6 +39,25 @@ Some state lives in this process alone, and a restart forgets it. For example:
 The harness, models, and settings exist only once `#open` has set them up, after the parts are made. So a part made with the app must not read them in its constructor; it reads them when it is called.
 
 Extensions never see `PocketApp`. They get `PocketHost` (`host.ts`), whose functions call into the app lazily. The HTTP layer parses a request, checks it, calls a part, and writes the answer; it holds no state of its own beyond invites and the event streams' pollers.
+
+## PiP's conversation
+
+PiP (`pip.ts`) is a conversation with a `pip` mark in its session entry, which `sessions()` leaves out of every list. The harness settings select every installed extension but PiP's (`pocket-pip`) by default; PiP's conversation stores its own selection (`PIP_EXTENSIONS`, without bash, write, or edit), which `ensure` sets again each time it opens, so PiP's tools reach no other conversation. Its tools act through `Commands` and `Schedules` as PiP's person, with that person's checks, so `canSee` keeps every PiP from everyone but its person: anyone who could write to it would act as them. Its messages to sessions are once per tool call (a request id hashed from the call's key), and each follow leaves a mark in its list (`FollowsDoc`) when it reports or is stopped, so a replayed call neither sends nor follows twice. A tab's PiP panel is a second client in PiP's room (`setPip`), whose `view` events reach the tab as `pipview`; `watching` counts it, so PiP's answers push nothing while it shows.
+
+## Work from outside the app
+
+A PR watch (`watches.ts`) is a `WatchDoc` in its session and a durable task there, which sleeps until its next look, looks with `gh` (`watches.gh`, which tests replace), and puts what to tell Pi in its checkpoint before sending it: the send's request id is the watch's task and count, so a restart sends it once. Comment ids told, and the commits whose failures and conflicts were told, stay in the watch. Webhooks (`hooks.ts`) are app-wide (`HooksDoc`); `/hook/…` is outside `/api` and its sign-in, and lets a post in only by its hook's secret. Both send through `Commands.submit` as their person, with a `via` that marks the message (`[via PR watch]`, `[via webhook NAME]`), so that person's checks and spend limit apply, and what came from outside is fenced (`fence.ts`, as PiP's session text is): no closing tag survives inside, in any case or spacing. A hook's address and secret are checked before its body is read. A signed hook (`signed`, for GitHub) lets a post in only by GitHub's signature: its secret is never in its address, so the address GitHub shows a repository's admins cannot post. Pi's `watch_pr` names a PR by number, which `gh` finds in the session's own repository, or one elsewhere by address only where `gh`'s account can push (`requirePush` in `github.ts`); what follows `--` is never an option.
+
+A repository watch (`repo-watches.ts`) is an item of the app-wide `RepoWatchesDoc` and a durable task in the conversation it messages (PiP's, or a session's), with the same wait, look, and send phases as a PR watch: a look puts the message in the task's checkpoint, and the send's request id is the task's and its count's, so it goes once. It reads the repository's issues, pulls, workflow runs, releases, and comments through `gh api`, and keeps the ids it told. PiP's tools (`repo_watch`, `session_watch_pr`, `session_start` with `repo`) act through `Pip` as its person; a repository is worked on or watched only where `gh`'s account can push, and `Pip.checkout` finds a session's checkout whose `origin` is the repository, or clones it once into `repos/`.
+
+## Memory
+
+Lessons Pi keeps across sessions are one document for the whole app, `MemoryDoc` (`pocket.memory`), by id. Each is for a project or for everywhere. A project is keyed by the real path of its git common folder (`git rev-parse --git-common-dir`), so a repository and all its worktrees share lessons; outside a repository, by the folder itself. `Memory` (`memory.ts`) works out a folder's project (kept a minute per folder) and keeps the rules:
+
+- The memory extension's section renders, before each request, the lessons in force for the conversation's folder: its project's and everywhere's, not pending, oldest first. It reads committed state only, so it renders the same text until a lesson changes. PiP has no project: it gets everywhere's.
+- Pi proposes, the owner approves. Every lesson Pi saves, and every one a person who is not the owner saves, is pending, and no prompt has it until the owner approves it: what Pi read anywhere in its context could have talked it into one. Pi's (or a guest's) new text for a lesson in force, and Pi's forgetting one, are a `proposal` on the lesson, which stays as it was until the owner approves or discards it. The tool's result names the lesson (`details.lesson`), so the transcript offers Approve and Discard under the call. An approval names what it saw (`POST …/memory/:id/approve` with `{ text }` or `{ forget: true }`); when what waits differs, `change` answers 409, so text or a proposal swapped after the owner looked is not approved with it. Pi proposing the text in force withdraws its own waiting proposal. Pending lessons do not count toward a project's or everywhere's cap; approving one does. Only the owner, or whoever saved a lesson, changes or removes it, Pi included (as the person it works for).
+- Pi's adds carry the tool call's key, so a replayed call finds its lesson. A subagent's lesson comes from its session (`rootOf`).
+- Every write adds an activity line to the session's chat in the same commit. `#committed` tells `Memory` when the document changed; it sends tabs a `memory` event, and the Memory sheet and menu fetch the lessons again (`GET /api/c/:id/memory`).
 
 ## Startup
 
