@@ -153,6 +153,20 @@ after(async () => {
     cleanUp();
 });
 
+test("a large patch does not fill the git buffer while listing its line counts", async () => {
+    const lines = 200_000;
+    const folder = repository("large-patch", { "large.txt": "old\n".repeat(lines) });
+
+    writeFileSync(join(folder, "large.txt"), "new\n".repeat(lines));
+    const id = await newSession(app, folder);
+    const [file] = (await app.workspace.changes(id, owner(app))).files;
+
+    assert.deepEqual(
+        { path: file?.path, added: file?.added, removed: file?.removed },
+        { path: "large.txt", added: lines, removed: lines },
+    );
+});
+
 test("a session's changes list git's uncommitted files, mark Pi's, and give each file's diff", async () => {
     const id = await newSession(app, repo);
 

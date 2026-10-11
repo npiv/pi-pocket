@@ -49,19 +49,20 @@ const GIT_TIMEOUT_MS = 15_000;
 /** Git for Changes: quick, with room for a long diff. */
 const git = (cwd: string, args: string[], options: GitOptions = {}) =>
     runGit(cwd, args, { timeoutMs: GIT_TIMEOUT_MS, maxBuffer: MAX_DIFF * 4, ...options });
-/**
- * Diffs as the viewer reads them, whatever a person's git config says: no external diff program or text conversion, no
- * colors, git's usual `a/` and `b/` before the paths (`diff.mnemonicPrefix` and `diff.noprefix` change them), and
- * three unchanged lines around each change, so fewer after the last one say where the file ends (`web/diff.js`).
- */
-const DIFF_FLAGS = [
-    "-U3",
+/** Diff output whatever a person's git config says: no external program, text conversion, or colors. */
+const DIFF_OUTPUT_FLAGS = [
     "--no-ext-diff",
     "--no-textconv",
     "--no-color",
     "--src-prefix=a/",
     "--dst-prefix=b/",
 ];
+/**
+ * Diffs as the viewer reads them: git's usual `a/` and `b/` before the paths (`diff.mnemonicPrefix` and
+ * `diff.noprefix` change them), and three unchanged lines around each change, so fewer after the last one say where
+ * the file ends (`web/diff.js`). `-U3` also turns on patch output, so it must not be used for numstat alone.
+ */
+const DIFF_FLAGS = ["-U3", ...DIFF_OUTPUT_FLAGS];
 
 const EDITORS = new Set(["write", "edit"]);
 /** The codemode tool's name (`extensions/codemode.ts`): its results list the calls a script made. */
@@ -289,7 +290,9 @@ export async function changesIn(
     const counts =
         branch === undefined
             ? new Map()
-            : parseNumstat(await git(root, ["diff", "HEAD", "--numstat", "-z", ...DIFF_FLAGS]));
+            : parseNumstat(
+                  await git(root, ["diff", "HEAD", "--numstat", "-z", ...DIFF_OUTPUT_FLAGS]),
+              );
     const versions = await Promise.all(status.map(({ path }) => versionOf(join(root, path))));
     const files = status.map(({ code, path }, index): ChangedFile => {
         const version = versions[index];
