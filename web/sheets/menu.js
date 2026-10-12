@@ -6,6 +6,7 @@ import { filesAvailable, setFilesOpen } from "../files-panel.js";
 import { peeksOn, togglePeeks } from "../peeks.js";
 import { openPip, pipAvailable, pipUnread } from "../pip.js";
 import { setArchived } from "../sessions.js";
+import { openSubagent } from "../subagents.js";
 import {
     actions,
     api,
@@ -13,7 +14,6 @@ import {
     canSteer,
     closeSheet,
     collab,
-    navigate,
     notify,
     openSheet,
     scoped,
@@ -291,7 +291,7 @@ export function MenuSheet() {
                 ${view.subagents.map((agent) =>
                     item(
                         html`${agent.busy ? html`<span class="pulse"></span> ` : ""}${agent.name}`,
-                        () => navigate(agent.conversationId),
+                        () => openSubagent(agent.conversationId),
                         agent.busy ? "working" : "idle",
                     ),
                 )}

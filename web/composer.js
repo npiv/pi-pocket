@@ -19,6 +19,7 @@ import {
     canSteer,
     collab,
     drafts,
+    navigate,
     notify,
     openSheet,
     store,
@@ -31,6 +32,26 @@ import { TrustBar } from "./trust.js";
 import { prefs } from "./theme.js";
 import { MicButton, useDictation } from "./voice.js";
 import { formatBytes, formatTokens, html, Icon, Marked, modelLabel, Spinner } from "./ui.js";
+
+/** The explicit route to the parent on every layout, outside the dock and the scrolling conversation. */
+function ParentSessionButton() {
+    const parent = store.state.view.conversation?.parent;
+
+    if (!parent) {
+        return null;
+    }
+
+    return html`<button
+        class="parent-session"
+        aria-label=${`Back to main session: ${parent.title}`}
+        title=${`Return to ${parent.title}`}
+        onClick=${() => navigate(parent.id)}
+    >
+        <${Icon} name="back" size=${16} />
+        <span>Back to main session</span>
+        <span class="parent-session-title">${parent.title}</span>
+    </button>`;
+}
 
 const coarse = matchMedia("(pointer: coarse)").matches;
 /** The newest "Send to Pi" text already put into a message box (see `insertIntoComposer`). */
@@ -920,6 +941,7 @@ export function Composer() {
                 <${TypingLine} where="pi" />
                 <${SubagentsBar} />
             </div>
+            <${ParentSessionButton} />
             <div class="view-only">
                 <span>
                     <strong>View only.</strong> You can read along, react, and chat with the people here.
@@ -982,6 +1004,7 @@ export function Composer() {
             <${SubagentsBar} />
             <${TrustBar} />
         </div>
+        <${ParentSessionButton} />
         ${
             blocked
                 ? html`${

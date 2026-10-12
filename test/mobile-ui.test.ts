@@ -458,6 +458,47 @@ test(
     },
 );
 
+// With a mouse: a touch screen's line under the title is a thumb tall whatever it holds.
+test("while a session loads, its title stays where it will be", real, async () => {
+    await fresh();
+    await page.setViewport(VIEWPORTS.desktop);
+    await page.navigate(`${base}/s/${first}`);
+    await until(
+        async () =>
+            (await inPage<boolean>(
+                `return JSON.stringify(document.querySelector(".topbar .title-sub")?.textContent.includes("main") === true)`,
+            )) === true,
+        "the folder and branch under the title",
+    );
+    // Before the server answers, the view is empty, as `navigate` leaves it: no folder or branch under the title yet.
+    const tops = await inPage<{ loaded: number; loading: number; sub: string }>(`
+        const { store } = await import("/store.js");
+        const top = () => document.querySelector(".topbar .title-main").getBoundingClientRect().top;
+        const painted = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+        // Past what pops and rises in as the page opens (not what loops for ever).
+        await Promise.all(
+            document
+                .getAnimations()
+                .filter((each) => each.effect?.getComputedTiming().endTime !== Infinity)
+                .map((each) => each.finished.catch(() => {})),
+        );
+        const loaded = top();
+
+        store.set({ view: { ...store.state.view, conversation: null, agent: null, branch: null } });
+        await painted();
+
+        return JSON.stringify({
+            loaded,
+            loading: top(),
+            sub: document.querySelector(".topbar .title-sub").textContent.trim(),
+        });
+    `);
+
+    assert.equal(tops.sub, "", "nothing under the title while it loads");
+    assert.equal(tops.loading, tops.loaded, "the title does not move");
+});
+
 test("a session opened straight away gets the list under it at the first tap", real, async () => {
     await fresh();
     await page.navigate(`${base}/s/${second}`);

@@ -117,11 +117,14 @@ export const store = {
         pipView: emptyView(),
     },
     listeners: new Set(),
+    /**
+     * Change the state: by a patch, or by what a function of the state returns. The function runs first, so a change
+     * it makes on the way (a notice, say) is kept, not overwritten by the state as it was before.
+     */
     set(patch) {
-        this.state = {
-            ...this.state,
-            ...(typeof patch === "function" ? patch(this.state) : patch),
-        };
+        const change = typeof patch === "function" ? patch(this.state) : patch;
+
+        this.state = { ...this.state, ...change };
 
         for (const listener of this.listeners) {
             listener(this.state);
@@ -679,7 +682,19 @@ function pollEvents(query) {
     return connection;
 }
 
+/** Sign-ins that ended, or whose dialog was closed here: what the server still says about them shows nothing. */
+const endedSignIns = new Set();
+
+/** The dialog of a sign-in (`AuthDialog`), as the server's words about it come. */
 function handleAuth(data) {
+    if (endedSignIns.has(data.flowId)) {
+        return;
+    }
+
+    if (data.step === "done") {
+        endedSignIns.add(data.flowId);
+    }
+
     store.set((state) => {
         const flow =
             state.auth?.flowId === data.flowId
@@ -687,6 +702,8 @@ function handleAuth(data) {
                 : {
                       flowId: data.flowId,
                       providerId: data.providerId,
+                      // Its id when the server sends no name (one not restarted since an update).
+                      providerName: data.providerName ?? data.providerId,
                       events: [],
                       prompt: null,
                       done: null,
@@ -706,7 +723,7 @@ function handleAuth(data) {
 
         if (data.step === "done") {
             if (data.ok) {
-                notify("info", `Signed in to ${data.providerId}.`);
+                notify("info", `Signed in to ${data.providerName ?? data.providerId}.`);
             }
 
             return { auth: data.ok ? null : { ...flow, prompt: null, done: data } };
@@ -714,6 +731,25 @@ function handleAuth(data) {
 
         return {};
     });
+}
+
+/**
+ * A sign-in's question was answered, and the server took the answer. The server's next words may have come first (the
+ * next question, or the end, which closes the dialog or shows why it failed): the dialog waits for the provider only
+ * while it still shows that sign-in asking that question.
+ */
+export function signInAnswered(flowId, promptId) {
+    store.set((state) =>
+        state.auth?.flowId === flowId && state.auth.prompt?.id === promptId
+            ? { auth: { ...state.auth, prompt: null } }
+            : {},
+    );
+}
+
+/** A sign-in's dialog was closed: it stays closed, whatever the server still says about that sign-in. */
+export function closeSignIn(flowId) {
+    endedSignIns.add(flowId);
+    store.set((state) => (state.auth?.flowId === flowId ? { auth: null } : {}));
 }
 
 export function navigate(conversationId, { replace = false, sheet = null } = {}) {

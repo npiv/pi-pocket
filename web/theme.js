@@ -205,7 +205,7 @@ function setVars(root, vars) {
     }
 }
 
-const modeOf = (palette) => (palette.colors.mode === "light" ? "light" : "dark");
+export const modeOf = (palette) => (palette.colors.mode === "light" ? "light" : "dark");
 
 const reducedMotion = () => {
     const motion = prefs().motion;

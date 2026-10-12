@@ -96,6 +96,7 @@ async function open() {
 
 before(async () => {
     app = await open();
+    await app.setSubagentModels(owner(app), ["faux/faux-1"]);
 });
 after(async () => {
     await app?.close();
