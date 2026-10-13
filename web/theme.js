@@ -28,6 +28,8 @@ const DEFAULTS = {
     group: "recent",
     /** Other sessions' live work as peek tiles beside the session (a strip on narrow screens). Off until turned on. */
     peeks: false,
+    /** How fast the last answer came, in the status line under the message box. Off until turned on. */
+    speed: false,
 };
 
 function readJson(key, fallback) {

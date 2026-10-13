@@ -77,6 +77,7 @@ import { PIP_COMPACT_CHOICES, PipCompaction } from "./pip-compact.ts";
 import { RepoWatches } from "./repo-watches.ts";
 import { snippet } from "./projection.ts";
 import { loadPromptTemplates, type PromptTemplate, type SkillCommand } from "./prompts.ts";
+import { measureModelStreams } from "./timing.ts";
 import { Providers } from "./providers.ts";
 import { PushStore } from "./push.ts";
 import { type ExtensionInfo, ExtensionLoader, prepareDropInFolder } from "./reload.ts";
@@ -380,6 +381,7 @@ export class PocketApp {
 
         this.models = await ModelRuntime.create();
         this.#configureModels?.(this.models);
+        measureModelStreams(this.models);
         await this.models.getAvailable().catch(() => []);
 
         const registry = createRegistry();
